@@ -122,7 +122,7 @@ export default function App() {
   );
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(3); // default 1 seconds throttle/delay
+  const [sendDelay, setSendDelay] = useState(1.0); // default 1.0 seconds throttle/delay
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -380,7 +380,7 @@ export default function App() {
     setSendingState("sending");
     isSendingRef.current = true;
 
-    const concurrency = 5;
+    const concurrency = 3;
     let nextIndexToProcess = startIndex;
     let activeWorkersCount = 0;
 
@@ -516,7 +516,7 @@ export default function App() {
 
         if (nextIndexToProcess < parsedRecipients.length && isSendingRef.current) {
           // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
-          let finalDelayMs = sendDelay * 1000;
+          let finalDelayMs = sendDelay * 1050;
           if (useJitter) {
             // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
             const randomModifier = (Math.random() * 4 - 1.5) * 1000;
@@ -697,7 +697,7 @@ export default function App() {
       {/* Main Layout Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
         
-        {/* LAUNCHER GRID - Exact 4 rows side-by-side matching user alignment preferences */}
+        {/* LAUNCHER GRID - Control block */}
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 space-y-6">
           <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -711,7 +711,6 @@ export default function App() {
 
           {/* ROW 1: Sender Name & Your Gmail */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left: Sender Name */}
             <div className="space-y-1">
               <label className="block text-sm font-bold text-slate-700" htmlFor="sender_name_input">
                 Sender Name <span className="text-xs font-normal text-slate-400 font-mono">(e.g., Aman Trades)</span>
@@ -726,7 +725,6 @@ export default function App() {
               />
             </div>
 
-            {/* Right: Your Gmail */}
             <div className="space-y-1">
               <label className="block text-sm font-bold text-slate-700" htmlFor="smtp_sender_email">
                 Your Gmail <span className="text-xs font-normal text-slate-400 font-mono">(login email ID)</span>
@@ -744,7 +742,6 @@ export default function App() {
 
           {/* ROW 2: App Password & Subject */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left: App Password */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700" htmlFor="smtp_app_password">
@@ -771,7 +768,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right: Subject */}
             <div className="space-y-1">
               <label className="block text-sm font-bold text-slate-700" htmlFor="mail_subject">
                 Subject <span className="text-xs font-normal text-slate-400 font-mono">({`{name}`} will parse name)</span>
@@ -789,7 +785,6 @@ export default function App() {
 
           {/* ROW 3: Message Body & Recipients */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left: Message Body */}
             <div className="space-y-1">
               <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5">
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
@@ -853,7 +848,6 @@ export default function App() {
               />
             </div>
 
-            {/* Right: Recipients (comma or newline) */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700">
@@ -897,7 +891,6 @@ export default function App() {
 
           {/* ROW 4: Send Control Panel & All Logout */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-            {/* Left Column: Send Controls */}
             <div className="space-y-1">
               <label className="block text-sm font-bold text-slate-700">
                 Send <span className="text-xs font-normal text-slate-400 font-mono">(Campaign dispatch options)</span>
@@ -909,7 +902,6 @@ export default function App() {
                     <span>Interval delay: {sendDelay}s per email</span>
                   </div>
                   
-                  {/* Advanced Mode dropdown inside quick access */}
                   <div className="flex items-center space-x-1 text-xs">
                     <span className="text-slate-400">Protocol:</span>
                     <select
@@ -931,7 +923,7 @@ export default function App() {
                   <input
                     type="range"
                     min="0.1"
-                    max="1"
+                    max="3"
                     step="0.1"
                     className="w-full accent-indigo-600 cursor-pointer"
                     value={sendDelay}
@@ -939,9 +931,9 @@ export default function App() {
                     id="delay_slider"
                   />
                   <div className="flex justify-between text-[9px] text-slate-400">
-                    <span>0.2s (Fast / Premium Speed)</span>
-                    <span className="text-emerald-600 font-semibold">1-3s (Ultra Deliverability)</span>
-                    <span>10s (Slow / Bulletproof)</span>
+                    <span>0.1s (Ultra Fast / Concurrent)</span>
+                    <span className="text-emerald-600 font-semibold">1.0s (Best Balance)</span>
+                    <span>3.0s (High Safety)</span>
                   </div>
                 </div>
 
@@ -1068,8 +1060,7 @@ export default function App() {
 
         {/* BOTTOM METRICS */}
         <div className="mt-6">
-          
-          {/* Campaign stats summary & progress (Full Width) */}
+          {/* Campaign stats summary & progress */}
           <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -1115,7 +1106,6 @@ export default function App() {
               </div>
             </div>
           </section>
-
         </div>
       </main>
 
