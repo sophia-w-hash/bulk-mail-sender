@@ -122,7 +122,7 @@ export default function App() {
   );
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(0.05); // default 0.05 seconds throttle/delay (25 emails in ~1.8 seconds), perfect for fast 1-by-1 delivery
+  const [sendDelay, setSendDelay] = useState(1.0); // default 1.0 second delay between batches (10 emails per batch)
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -160,17 +160,14 @@ export default function App() {
     localStorage.setItem("bulk_sender_name", senderName);
   }, [senderName]);
 
-  // Save Config to LocalStorage
   useEffect(() => {
     localStorage.setItem("bulk_sender_email", senderEmail);
   }, [senderEmail]);
 
-  // Save Config to LocalStorage
   useEffect(() => {
     localStorage.setItem("bulk_smtp_pass", appPassword);
   }, [appPassword]);
 
-  // Save Config to LocalStorage
   useEffect(() => {
     localStorage.setItem("bulk_smtp_mode", smtpMode);
   }, [smtpMode]);
@@ -360,17 +357,6 @@ export default function App() {
       return;
     }
 
-    // Verify SMTP is authenticated before starting massive campaign
-    if (smtpVerified !== true) {
-      const isOk = await checkSmtpQuietly();
-      if (!isOk) {
-        const goOn = window.confirm(
-          `Warning: SMTP Connection check failed on route. Make sure your 16-digit Gmail App Password is typed correctly. Do you want to try sending anyway?`
-        );
-        if (!goOn) return;
-      }
-    }
-
     let startIndex = currentIndex;
     if (currentIndex >= parsedRecipients.length) {
       startIndex = 0;
@@ -383,9 +369,8 @@ export default function App() {
     setSendingState("sending");
     isSendingRef.current = true;
 
-    const concurrency = 1; // 1-by-1 sequential sender for maximal inbox-delivery safety
+    const batchSize = 10;
     let nextIndexToProcess = startIndex;
-    let activeWorkersCount = 0;
 
     const processSingleItem = async (indexToProcess: number): Promise<boolean> => {
       // Ensure Gmail hourly dispatch limit of 27 per 2-hours is fully safe and enforced
@@ -444,7 +429,7 @@ export default function App() {
                 ? { 
                     ...log, 
                     status: "success", 
-                    subject: customSubject, 
+                    subject: customSubject, // record the exact parsed subject sent to this user in logs
                     timestamp: new Date().toLocaleTimeString(), 
                     error: undefined 
                   } 
@@ -502,28 +487,35 @@ export default function App() {
       }
     };
 
-    const runWorker = async () => {
-      activeWorkersCount++;
-      while (isSendingRef.current) {
-        if (nextIndexToProcess >= parsedRecipients.length) {
-          break;
+    const runBatchDispatch = async () => {
+      while (isSendingRef.current && nextIndexToProcess < parsedRecipients.length) {
+        const currentBatch: number[] = [];
+        for (let i = 0; i < batchSize && (nextIndexToProcess + i) < parsedRecipients.length; i++) {
+          currentBatch.push(nextIndexToProcess + i);
         }
-        const indexToProcess = nextIndexToProcess;
-        nextIndexToProcess++;
+
+        // Parallel trigger for the entire batch
+        const batchPromises = currentBatch.map((index) => processSingleItem(index));
+
+        // Advance the master index
+        nextIndexToProcess += currentBatch.length;
         setCurrentIndex(nextIndexToProcess);
 
-        const success = await processSingleItem(indexToProcess);
-        if (!success || !isSendingRef.current) {
+        // Wait for all messages in the batch to be processed
+        const results = await Promise.all(batchPromises);
+
+        // If any sending process failed or was aborted, stop
+        const allOk = results.every((ok) => ok === true);
+        if (!allOk || !isSendingRef.current) {
           break;
         }
 
+        // Apply delay between batches if there is more to process
         if (nextIndexToProcess < parsedRecipients.length && isSendingRef.current) {
-          // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
-          let finalDelayMs = sendDelay * 600;
+          let finalDelayMs = sendDelay * 1000;
           if (useJitter) {
-            // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
-            const randomModifier = (Math.random() * 4 - 1.5) * 600;
-            finalDelayMs = Math.max(600, finalDelayMs + randomModifier);
+            const randomModifier = (Math.random() * 4 - 1.5) * 1000;
+            finalDelayMs = Math.max(100, finalDelayMs + randomModifier);
           }
 
           await new Promise<void>((resolve) => {
@@ -535,20 +527,15 @@ export default function App() {
           });
         }
       }
-      activeWorkersCount--;
 
-      if (activeWorkersCount === 0) {
-        setSendingState("idle");
-        if (nextIndexToProcess >= parsedRecipients.length && isSendingRef.current) {
-          alert("🎉 Done! All bulk emails processed successfully.");
-        }
+      setSendingState("idle");
+      if (nextIndexToProcess >= parsedRecipients.length && isSendingRef.current) {
+        alert("🎉 Done! All bulk emails processed successfully.");
       }
+      isSendingRef.current = false;
     };
 
-    const activeWorkers = Math.min(concurrency, parsedRecipients.length - startIndex);
-    for (let i = 0; i < activeWorkers; i++) {
-      runWorker();
-    }
+    runBatchDispatch();
   };
 
   const handlePauseSending = () => {
@@ -730,7 +717,7 @@ export default function App() {
             </div>
 
             {/* Right: Your Gmail */}
-            <div className="space-y-1">
+            <div className="grid-cols-1 space-y-1">
               <label className="block text-sm font-bold text-slate-700" htmlFor="smtp_sender_email">
                 Your Gmail <span className="text-xs font-normal text-slate-400 font-mono">(login email ID)</span>
               </label>
@@ -909,7 +896,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700">
                     <Clock className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>Interval delay: {sendDelay}s per email</span>
+                    <span>Batch Delay: {sendDelay}s (10 mails/batch)</span>
                   </div>
                   
                   {/* Advanced Mode dropdown inside quick access */}
@@ -933,18 +920,18 @@ export default function App() {
                 <div className="space-y-1">
                    <input
                      type="range"
-                     min="0.05"
-                     max="10"
-                     step="0.05"
+                     min="0.1"
+                     max="15"
+                     step="0.1"
                      className="w-full accent-indigo-600 cursor-pointer"
                      value={sendDelay}
                      onChange={(e) => setSendDelay(Number(e.target.value))}
                      id="delay_slider"
                    />
                    <div className="flex justify-between text-[9px] text-slate-400">
-                     <span>0.15s (Turbo / 25 mails in 3.7s)</span>
-                     <span className="text-emerald-600 font-semibold">1.0s (Recommended Speed)</span>
-                     <span>10.0s (Max Safety)</span>
+                     <span>0.1s (Instant Batch / Ultra Fast)</span>
+                     <span className="text-emerald-600 font-semibold">1.0s (Best Balance / safe inbox)</span>
+                     <span>15.0s (Max Safety per batch)</span>
                    </div>
                  </div>
 
