@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, ChangeEvent } from "react";
 import { 
   Mail, 
   Send, 
@@ -10,13 +10,17 @@ import {
   Pause, 
   Square, 
   AlertCircle, 
+  Eye, 
+  EyeOff, 
   RefreshCw, 
   HelpCircle, 
   Cpu, 
   Info, 
   Clock, 
+  Search, 
   FileSpreadsheet, 
   Terminal,
+  Layers,
   LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -100,6 +104,7 @@ export default function App() {
   const [senderEmail, setSenderEmail] = useState(() => localStorage.getItem("bulk_sender_email") || "");
   const [appPassword, setAppPassword] = useState(() => localStorage.getItem("bulk_smtp_pass") || "");
   const [smtpMode, setSmtpMode] = useState(() => localStorage.getItem("bulk_smtp_mode") || "auto");
+  const [showPassword, setShowPassword] = useState(false);
   const [smtpVerified, setSmtpVerified] = useState<boolean | null>(null);
   const [verifyingSmtp, setVerifyingSmtp] = useState(false);
   const [smtpStatusMsg, setSmtpStatusMsg] = useState("");
@@ -142,7 +147,7 @@ export default function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const isSendingRef = useRef<boolean>(false);
   const sendingStateRef = useRef<"idle" | "sending" | "paused">("idle");
-  const delayTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const activeTimersRef = useRef<Set<any>>(new Set());
 
   // Synchronize dynamic references for the loop effect
   useEffect(() => {
@@ -200,62 +205,58 @@ export default function App() {
     return rawRecipients
       .split("\n")
       .map((line, idx) => {
-        if (!line.trim()) return null;
-        
-        // Supports Name, Email OR just Plain Email structure
-        if (line.includes(",")) {
-          const parts = line.split(",");
-          const name = parts[0]?.trim();
-          const email = parts[1]?.trim();
-          if (email && email.includes("@")) {
+        const cleaned = line.trim();
+        if (!cleaned) return null;
+
+        // Try comma split: Name, email
+        if (cleaned.includes(",")) {
+          const parts = cleaned.split(",");
+          const name = parts[0]?.trim() || "";
+          const email = parts[1]?.trim() || "";
+          if (email.includes("@")) {
             return { name, email, index: idx };
           }
-        } else {
-          const email = line.trim();
-          if (email && email.includes("@")) {
-            return { name: email.split("@")[0] || "Recipient", email, index: idx };
+        }
+
+        // Try clean email only
+        if (cleaned.includes("@")) {
+          const emailMatch = cleaned.match(/[^\s,;]+@[^\s,;]+/);
+          if (emailMatch) {
+            const email = emailMatch[0];
+            const name = email.split("@")[0];
+            return { name, email, index: idx };
           }
         }
+
         return null;
       })
       .filter((item): item is Client => item !== null);
   }, [rawRecipients]);
 
-  // Comprehensive custom template variables parser & nested spintax generator
-  const renderTemplateFull = (template: string, clientName: string, clientEmail: string): string => {
-    let result = template;
-
-    // 1. Resolve nested spintax structure dynamically: {Awesome|Great|Fantastic}
-    const spintaxRegex = /\{([^{}]+)\}/g;
-    let match;
-    while ((match = spintaxRegex.exec(result)) !== null) {
-      const parentExpr = match[0];
-      const alternatives = match[1];
-
-      // Exclude predefined variables name, email, and security placeholders
-      if (
-        alternatives === "name" || 
-        alternatives === "email" || 
-        alternatives === "random_id" || 
-        alternatives === "date" || 
-        alternatives === "time"
-      ) {
-        continue;
-      }
-
-      if (alternatives && alternatives.includes("|")) {
-        const list = alternatives.split("|");
-        const selected = list[Math.floor(Math.random() * list.length)] || "";
-        result = result.replace(parentExpr, selected);
-        // Reset regex search layout to handle shifts safely
-        spintaxRegex.lastIndex = 0;
-      }
+  // Spintax & Dynamic Content Generator Tools for Safe Inbox Delivery
+  const parseSpintax = (str: string): string => {
+    let output = str;
+    // Matches {abc|def|xyz} patterns containing a pipe character
+    const spintaxRegex = /\{([^{}|]+(?:\|[^{}|]+)+)\}/g;
+    let limit = 0; // prevent absolute infinite loops
+    while (spintaxRegex.test(output) && limit < 100) {
+      output = output.replace(spintaxRegex, (match, choicesStr) => {
+        const choices = choicesStr.split('|');
+        return choices[Math.floor(Math.random() * choices.length)];
+      });
+      limit++;
     }
+    return output;
+  };
 
-    // 2. Generate a custom unique transaction hex reference string {random_id}
-    const randomHex = Math.random().toString(16).substring(2, 8).toUpperCase();
-
-    // 3. Resolve formatted Calendar and Time variables
+  const renderTemplateFull = (template: string, clientName: string, clientEmail: string): string => {
+    // 1. Process Spintax choices first (e.g. {Hi|Hello|Hey})
+    let result = parseSpintax(template);
+    
+    // 2. Generate random 6-character hex/alphanumeric code
+    const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    // 3. Current Date & Time values
     const todayStr = new Date().toLocaleDateString('en-GB'); // "16/06/2026"
     const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false }); // "14:25:01"
     
@@ -356,43 +357,14 @@ export default function App() {
       return;
     }
 
-    // Verify limit status before letting campaign trigger
-    const limitStatus = checkGmailLimit(senderEmail);
-    if (!limitStatus.allowed) {
-      const resetTimeStr = limitStatus.nextResetTimeMs > 0 
-        ? new Date(limitStatus.nextResetTimeMs).toLocaleTimeString() 
-        : "in roughly 2 hours";
-      
-      setLimitModalSender(senderEmail);
-      setLimitModalResetTime(resetTimeStr);
-      setLimitModalOpen(true);
-      return;
-    }
-
-    if (sendingState === "paused") {
-      setSendingState("sending");
-      isSendingRef.current = true;
-      processNextItem(currentIndex);
-      return;
-    }
-
-    setSendingState("sending");
-    isSendingRef.current = true;
-    
-    // Quick background check on startup to alert and fail-fast if password typing was wrong
-    const verified = await checkSmtpQuietly();
-    if (!verified && isSendingRef.current) {
-      const promptContinue = window.confirm(
-        `Warning: SMTP Connection check failed on route. Make sure your 16-digit Gmail App Password is typed correctly. Do you want to try sending anyway?`
-      );
-      if (!promptContinue) {
-        setSendingState("idle");
-        isSendingRef.current = false;
-        
-        setErrorModalTitle("SMTP Connection Failed");
-        setErrorModalMessage("Campaign start suspended because the connection check failed. Please check your App Password credentials or try again.");
-        setErrorModalOpen(true);
-        return;
+    // Verify SMTP is authenticated before starting massive campaign
+    if (smtpVerified !== true) {
+      const isOk = await checkSmtpQuietly();
+      if (!isOk) {
+        const goOn = window.confirm(
+          `Warning: SMTP Connection check failed on route. Make sure your 16-digit Gmail App Password is typed correctly. Do you want to try sending anyway?`
+        );
+        if (!goOn) return;
       }
     }
 
@@ -407,85 +379,101 @@ export default function App() {
 
     setSendingState("sending");
     isSendingRef.current = true;
-    processNextItem(startIndex);
-  };
 
-  // Loop dispatch handler
-  const processNextItem = async (indexToProcess: number) => {
-    if (!isSendingRef.current || indexToProcess >= parsedRecipients.length) {
-      if (indexToProcess >= parsedRecipients.length) {
+    const concurrency = 3;
+    let nextIndexToProcess = startIndex;
+    let activeWorkersCount = 0;
+
+    const processSingleItem = async (indexToProcess: number): Promise<boolean> => {
+      // Ensure Gmail hourly dispatch limit of 27 per 2-hours is fully safe and enforced
+      const limitStatus = checkGmailLimit(senderEmail);
+      if (!limitStatus.allowed) {
         setSendingState("idle");
         isSendingRef.current = false;
-        alert("🎉 Done! All bulk emails processed successfully.");
+        const resetTimeStr = limitStatus.nextResetTimeMs > 0 
+          ? new Date(limitStatus.nextResetTimeMs).toLocaleTimeString() 
+          : "in roughly 2 hours";
+        
+        setLimitModalSender(senderEmail);
+        setLimitModalResetTime(resetTimeStr);
+        setLimitModalOpen(true);
+        return false;
       }
-      return;
-    }
 
-    // Ensure Gmail hourly dispatch limit of 27 per 2-hours is fully safe and enforced
-    const limitStatus = checkGmailLimit(senderEmail);
-    if (!limitStatus.allowed) {
-      setSendingState("idle");
-      isSendingRef.current = false;
-      const resetTimeStr = limitStatus.nextResetTimeMs > 0 
-        ? new Date(limitStatus.nextResetTimeMs).toLocaleTimeString() 
-        : "in roughly 2 hours";
-      
-      setLimitModalSender(senderEmail);
-      setLimitModalResetTime(resetTimeStr);
-      setLimitModalOpen(true);
-      return;
-    }
+      const currentClient = parsedRecipients[indexToProcess];
 
-    const currentClient = parsedRecipients[indexToProcess];
-    setCurrentIndex(indexToProcess);
+      setLogs((prev) => 
+        prev.map((log, idx) => 
+          idx === indexToProcess ? { ...log, status: "sending", timestamp: "Sending..." } : log
+        )
+      );
 
-    setLogs((prev) => 
-      prev.map((log, idx) => 
-        idx === indexToProcess ? { ...log, status: "sending", timestamp: "Sending..." } : log
-      )
-    );
+      // Render templates with full safety spintax and unique variables!
+      const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
+      const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
 
-    // Render templates with full safety spintax and unique variables!
-    const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
-    const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
+      try {
+        const response = await fetch("/api/send-mail", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            senderName,
+            senderEmail,
+            appPassword,
+            recipientEmail: currentClient.email,
+            subject: customSubject,
+            text: customBody,
+            // Generate html line break standard formatting for safe deliverability
+            html: customBody.replace(/\n/g, "<br>"),
+            smtpMode,
+          }),
+        });
 
-    try {
-      const response = await fetch("/api/send-mail", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          senderName,
-          senderEmail,
-          appPassword,
-          recipientEmail: currentClient.email,
-          subject: customSubject,
-          text: customBody,
-          // Generate html line break standard formatting for safe deliverability
-          html: customBody.replace(/\n/g, "<br>"),
-          smtpMode,
-        }),
-      });
+        const data = await response.json();
 
-      const data = await response.json();
+        if (data.success) {
+          // Record secure successful send inside Gmail rolling limiter
+          recordGmailSend(senderEmail);
 
-      if (data.success) {
-        // Record secure successful send inside Gmail rolling limiter
-        recordGmailSend(senderEmail);
+          setLogs((prev) => 
+            prev.map((log, idx) => 
+              idx === indexToProcess 
+                ? { 
+                    ...log, 
+                    status: "success", 
+                    subject: customSubject, // record the exact parsed subject sent to this user in logs
+                    timestamp: new Date().toLocaleTimeString(), 
+                    error: undefined 
+                  } 
+                : log
+            )
+          );
+          return true;
+        } else {
+          // Stop dispatch loop
+          setSendingState("idle");
+          isSendingRef.current = false;
 
-        setLogs((prev) => 
-          prev.map((log, idx) => 
-            idx === indexToProcess 
-              ? { 
-                  ...log, 
-                  status: "success", 
-                  subject: customSubject, // record the exact parsed subject sent to this user in logs
-                  timestamp: new Date().toLocaleTimeString(), 
-                  error: undefined 
-                } 
-              : log
-          )
-        );
-      } else {
+          setLogs((prev) => 
+            prev.map((log, idx) => 
+              idx === indexToProcess 
+                ? { 
+                    ...log, 
+                    status: "failed", 
+                    subject: customSubject,
+                    timestamp: new Date().toLocaleTimeString(),
+                    error: data.error || "Rejected by Google SMTP server." 
+                  } 
+                : log
+            )
+          );
+
+          setErrorModalTitle("SMTP Transmission Error");
+          setErrorModalMessage(data.error || "Google SMTP server rejected the login. Please confirm your 16-digit Gmail App Password matches exactly.");
+          setErrorModalOpen(true);
+          return false;
+        }
+      } catch (err: any) {
         // Stop dispatch loop
         setSendingState("idle");
         isSendingRef.current = false;
@@ -498,79 +486,81 @@ export default function App() {
                   status: "failed", 
                   subject: customSubject,
                   timestamp: new Date().toLocaleTimeString(),
-                  error: data.error || "Rejected by Google SMTP server." 
+                  error: err.message || "Failed network connection to mail server." 
                 } 
               : log
           )
         );
 
-        // NEW PARALLEL CODE (एक साथ 3 ईमेल भेजने के लिए रिप्लेसमेंट)
-const nextIdx = indexToProcess + 1;
-setCurrentIndex(nextIdx);
+        setErrorModalTitle("Dispatch Connection Failed");
+        setErrorModalMessage(err.message || "Could not make a secure request to the outbound mail server. Check backend status.");
+        setErrorModalOpen(true);
+        return false;
+      }
+    };
 
-if (nextIdx < parsedRecipients.length && isSendingRef.current) {
-  let finalDelayMs = sendDelay * 1000;
-  if (useJitter) {
-    const randomModifier = (Math.random() * 4 - 1.5) * 1000;
-    finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
-  }
+    const runWorker = async () => {
+      activeWorkersCount++;
+      while (isSendingRef.current) {
+        if (nextIndexToProcess >= parsedRecipients.length) {
+          break;
+        }
+        const indexToProcess = nextIndexToProcess;
+        nextIndexToProcess++;
+        setCurrentIndex(nextIndexToProcess);
 
-  // अगर अगला इंडेक्स 3 का मल्टीपल है या आखिरी बैच है, तो यह डिले के बाद एक साथ 3 कनेक्टेड थ्रेड्स शुरू करेगा
-  delayTimerRef.current = setTimeout(() => {
-    // एक साथ 3-3 के बैच में रिकॉर्ड प्रोसेस करने के लिए थ्रेड्स शुरू करना
-    if (nextIdx % 3 === 0) {
-      for (let i = 0; i < 3; i++) {
-        const targetIdx = nextIdx + i;
-        if (targetIdx < parsedRecipients.length) {
-          processNextItem(targetIdx);
+        const success = await processSingleItem(indexToProcess);
+        if (!success || !isSendingRef.current) {
+          break;
+        }
+
+        if (nextIndexToProcess < parsedRecipients.length && isSendingRef.current) {
+          // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
+          let finalDelayMs = sendDelay * 1000;
+          if (useJitter) {
+            // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
+            const randomModifier = (Math.random() * 4 - 1.5) * 1000;
+            finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
+          }
+
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              activeTimersRef.current.delete(timer);
+              resolve();
+            }, finalDelayMs);
+            activeTimersRef.current.add(timer);
+          });
         }
       }
-    } else {
-      // सिंगल रन बैकअप
-      processNextItem(nextIdx);
-    }
-  }, finalDelayMs);
-}
-            : log
-        )
-      );
+      activeWorkersCount--;
 
-      setErrorModalTitle("Dispatch Connection Failed");
-      setErrorModalMessage(err.message || "Could not make a secure request to the outbound mail server. Check backend status.");
-      setErrorModalOpen(true);
-    }
-
-    const nextIdx = indexToProcess + 1;
-    setCurrentIndex(nextIdx);
-
-    if (nextIdx < parsedRecipients.length && isSendingRef.current) {
-      // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
-      let finalDelayMs = sendDelay * 1000;
-      if (useJitter) {
-        // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
-        const randomModifier = (Math.random() * 4 - 1.5) * 1000;
-        finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
+      if (activeWorkersCount === 0) {
+        setSendingState("idle");
+        if (nextIndexToProcess >= parsedRecipients.length && isSendingRef.current) {
+          alert("🎉 Done! All bulk emails processed successfully.");
+        }
       }
+    };
 
-      delayTimerRef.current = setTimeout(() => {
-        processNextItem(nextIdx);
-      }, finalDelayMs);
-    } else if (nextIdx >= parsedRecipients.length) {
-      setSendingState("idle");
+    const activeWorkers = Math.min(concurrency, parsedRecipients.length - startIndex);
+    for (let i = 0; i < activeWorkers; i++) {
+      runWorker();
     }
   };
 
   const handlePauseSending = () => {
     isSendingRef.current = false;
     setSendingState("paused");
-    if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+    activeTimersRef.current.forEach((timer) => clearTimeout(timer));
+    activeTimersRef.current.clear();
   };
 
   const handleStopSending = () => {
     isSendingRef.current = false;
     setSendingState("idle");
     setCurrentIndex(0);
-    if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+    activeTimersRef.current.forEach((timer) => clearTimeout(timer));
+    activeTimersRef.current.clear();
   };
 
   // Upload custom dynamic list of clients (.txt or .csv files)
@@ -805,87 +795,131 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
                   Message Body
                 </label>
-                <div className="flex flex-wrap gap-1">
-                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">{`{name}`}</span>
-                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">{`{email}`}</span>
-                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">{`{random_id}`}</span>
-                  <span 
-                    className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold cursor-help"
+                <div className="flex flex-wrap items-center gap-1.5 bg-indigo-50/50 p-1.5 rounded-lg border border-indigo-100">
+                  <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-tight">Anti-Spam Code:</span>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {name}")}
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                  >
+                    +name
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {email}")}
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                  >
+                    +email
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {random_id}")}
+                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition"
                     title="Bypasses Gmail duplicate spam filters (Generates custom unique code for every person)."
                   >
-                    🚀 {`{Awesome|Great}`} Spintax
-                  </span>
+                    +unique_id
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {date}")}
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                  >
+                    +date
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {time}")}
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                  >
+                    +time
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyTemplate(p => p + " {Hi|Hello|Hey}")}
+                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition"
+                    title="Spintax format: Randomly chooses one option per email."
+                  >
+                    +spintax
+                  </button>
                 </div>
               </div>
               <textarea
-                className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg p-3.5 h-[160px] focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white resize-y"
-                placeholder="Write your email body template..."
+                rows={8}
+                className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white leading-relaxed resize-y font-sans"
+                placeholder="Write message here..."
                 value={bodyTemplate}
                 onChange={(e) => setBodyTemplate(e.target.value)}
                 id="mail_body"
               />
             </div>
 
-            {/* Right: Recipients */}
+            {/* Right: Recipients (comma or newline) */}
             <div className="space-y-1">
-              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5">
-                <label className="block text-sm font-bold text-slate-700" htmlFor="raw_recipients_area">
-                  Recipients List <span className="text-xs font-normal text-slate-400">({parsedRecipients.length} valid)</span>
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-bold text-slate-700">
+                  Recipients (comma or newline)
                 </label>
-                
-                {/* Visual file uploader */}
-                <div className="relative">
+                <label className="text-xs text-indigo-600 hover:underline hover:text-indigo-800 font-bold flex items-center space-x-1 cursor-pointer">
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  <span>Import CSV / TXT</span>
                   <input
                     type="file"
-                    accept=".txt,.csv"
-                    onChange={handleFileUpload}
+                    accept=".csv,.txt"
                     className="hidden"
-                    id="recipient_file_input"
+                    onChange={handleFileUpload}
                   />
-                  <label
-                    htmlFor="recipient_file_input"
-                    className="cursor-pointer text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1.5 rounded-md font-bold flex items-center space-x-1 transition"
-                  >
-                    <FileSpreadsheet className="h-3.5 w-3.5" />
-                    <span>Upload CSV / TXT</span>
-                  </label>
-                </div>
+                </label>
               </div>
-              
               <textarea
-                className="w-full text-sm font-mono bg-slate-50 border border-slate-200 rounded-lg p-3.5 h-[160px] focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white resize-y"
-                placeholder="Name, email@domain.com (One per line)"
+                rows={8}
+                className="w-full text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white leading-relaxed resize-y"
+                placeholder="Aman Kumar, aman@example.com&#10;Vijay Sharma, vijay@example.com&#10;your_client@domain.com"
                 value={rawRecipients}
                 onChange={(e) => {
                   setRawRecipients(e.target.value);
                   setRecipientFileHelp("");
                 }}
-                id="raw_recipients_area"
+                id="recipient_raw_paste"
               />
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>Separate with commas.</span>
-                <span className="text-emerald-700 font-semibold">{recipientFileHelp}</span>
+              <div className="flex justify-between text-[11px] text-slate-500 pt-0.5">
+                <span>Enter <strong>Name, Email</strong> per line.</span>
+                <span className="font-semibold text-indigo-600">
+                  Parsed count: {parsedRecipients.length} clients
+                </span>
               </div>
+              {recipientFileHelp && (
+                <p className="text-xs text-emerald-700 font-medium bg-emerald-50 p-2 border border-emerald-100 rounded mt-1">
+                  {recipientFileHelp}
+                </p>
+              )}
             </div>
           </div>
 
-          {/* ROW 4: Dispatch Tuning Panel */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 border-t border-slate-100">
-            {/* Left Column: Delay Throttle */}
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                {/* Mode Select */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Connection Protocol
-                  </label>
-                  <div className="relative">
+          {/* ROW 4: Send Control Panel & All Logout */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+            {/* Left Column: Send Controls */}
+            <div className="space-y-1">
+              <label className="block text-sm font-bold text-slate-700">
+                Send <span className="text-xs font-normal text-slate-400 font-mono">(Campaign dispatch options)</span>
+              </label>
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700">
+                    <Clock className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Interval delay: {sendDelay}s per email</span>
+                  </div>
+                  
+                  {/* Advanced Mode dropdown inside quick access */}
+                  <div className="flex items-center space-x-1 text-xs">
+                    <span className="text-slate-400">Protocol:</span>
                     <select
-                      className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg py-2.5 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 appearance-none"
+                      className="bg-transparent border-none text-indigo-600 font-semibold p-0 text-xs focus:ring-0 cursor-pointer focus:outline-none"
                       value={smtpMode}
                       onChange={(e) => setSmtpMode(e.target.value)}
+                      id="smtp_mode_select"
                     >
-                      <option value="auto">Port 465 SSL (Recommended)</option>
+                      <option value="auto">Auto Port (465 SSL)</option>
+                      <option value="465">Port 465 SSL</option>
                       <option value="587">Port 587 TLS</option>
                       <option value="gmail">Gmail Service Helper</option>
                     </select>
@@ -896,15 +930,15 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
                 <div className="space-y-1">
                   <input
                     type="range"
-                    min="0.1"
+                    min="0.2"
                     max="10"
-                    step="0.1"
+                    step="0.2"
                     className="w-full accent-indigo-600 cursor-pointer"
                     value={sendDelay}
                     onChange={(e) => setSendDelay(Number(e.target.value))}
                     id="delay_slider"
                   />
-                  <div className="flex justify-between text-[9px] text-slate-400 font-sans">
+                  <div className="flex justify-between text-[9px] text-slate-400">
                     <span>0.2s (Fast / Premium Speed)</span>
                     <span className="text-emerald-600 font-semibold">1-3s (Ultra Deliverability)</span>
                     <span>10s (Slow / Bulletproof)</span>
@@ -912,7 +946,7 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
                 </div>
 
                 {/* Jitter (Anti-Bot Pattern Randomizer) toggle */}
-                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs col-span-2">
+                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs">
                   <div className="flex flex-col pr-2">
                     <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
                       <Cpu className="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
@@ -927,8 +961,50 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
                       checked={useJitter}
                       onChange={(e) => setUseJitter(e.target.checked)}
                     />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-350 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                    <div className="w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-600"></div>
                   </label>
+                </div>
+
+                {/* Action Trigger Buttons for Campaign */}
+                <div className="grid grid-cols-3 gap-2">
+                  {sendingState !== "sending" ? (
+                    <button
+                      onClick={startSendingQueue}
+                      disabled={parsedRecipients.length === 0}
+                      className={`col-span-2 flex items-center justify-center space-x-2 py-3 rounded-lg font-bold text-sm text-white transition cursor-pointer ${
+                        parsedRecipients.length === 0 
+                        ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                        : "bg-emerald-600 hover:bg-emerald-700 active:scale-98 shadow-sm"
+                      }`}
+                      id="campaign_play_btn"
+                    >
+                      <Play className="h-4 w-4 fill-white shrink-0" />
+                      <span>{sendingState === "paused" ? "Resume Campaign" : "Send"}</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handlePauseSending}
+                      className="col-span-2 flex items-center justify-center space-x-2 py-3 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white rounded-lg font-bold text-sm transition cursor-pointer shadow-sm"
+                      id="campaign_pause_btn"
+                    >
+                      <Pause className="h-4 w-4 fill-white shrink-0" />
+                      <span>Pause</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleStopSending}
+                    disabled={sendingState === "idle" && currentIndex === 0}
+                    className={`flex items-center justify-center space-x-1.5 border rounded-lg text-xs font-bold transition cursor-pointer ${
+                      sendingState === "idle" && currentIndex === 0
+                      ? "border-slate-200 text-slate-300 cursor-not-allowed"
+                      : "border-slate-300 bg-white hover:bg-slate-100 text-slate-700 active:scale-98"
+                    }`}
+                    id="campaign_stop_btn"
+                  >
+                    <Square className="h-3.5 w-3.5 fill-slate-700 shrink-0" />
+                    <span>Stop</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -939,100 +1015,55 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
                 <label className="block text-sm font-bold text-slate-700">
                   All Logout
                 </label>
-                {smtpVerified && (
-                  <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
-                    Connected Realtime
-                  </span>
-                )}
-              </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[120px]">
-                <div className="flex items-start space-x-2 text-[11px] text-slate-500 leading-normal">
-                  <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
-                  <span>Clearing the SMTP config deletes your temporary local display settings from this browser's cookies and stops sending immediately.</span>
-                </div>
-                
                 <button
                   type="button"
-                  onClick={handleClearSMTPConfig}
-                  className="w-full py-2.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 text-rose-700 text-xs font-bold rounded-lg flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                  onClick={handleVerifySMTP}
+                  disabled={verifyingSmtp || !senderEmail || !appPassword}
+                  className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400"
+                  id="verify_quick_trigger"
                 >
-                  <LogOut className="h-4 w-4" />
-                  <span>Clear configurations & Logout</span>
+                  {verifyingSmtp ? "Verifying..." : "Verify Connection Link"}
                 </button>
+              </div>
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px]">
+                <div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Apne email credentials ko fully temporary browser cache se clear karne k liye Logout dabayein.
+                  </p>
+                </div>
+
+                {/* Action Button: Clear/Logout Credentials */}
+                <div className="space-y-2">
+                  <button
+                    onClick={handleClearSMTPConfig}
+                    className="w-full flex items-center justify-center space-x-2 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-200 hover:border-rose-300 rounded-lg font-bold text-sm transition cursor-pointer active:scale-98"
+                    id="clear_smtp_btn"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span>All Logout</span>
+                  </button>
+
+                  {/* Real-time verification notice feed */}
+                  {smtpStatusMsg && (
+                    <div className={`text-xs font-semibold flex items-start space-x-1.5 p-2 rounded-lg border ${
+                      smtpVerified === true ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-rose-50 text-rose-800 border-rose-200"
+                    }`}>
+                      <div className="mt-0.5 shrink-0">
+                        {smtpVerified === true ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-rose-600" />
+                        )}
+                      </div>
+                      <div className="leading-tight text-[11px]">
+                        {smtpStatusMsg}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* CAMPAIGN ACTIONS CONTROLLERS */}
-        <div className="mt-6 flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap gap-3 items-center">
-            {sendingState === "idle" ? (
-              <button
-                onClick={startSendingQueue}
-                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-lg font-bold text-sm flex items-center space-x-2 shadow-xs hover:shadow-md cursor-pointer transition active:scale-98"
-                id="start_queue_btn"
-              >
-                <Play className="h-4 w-4 fill-white" />
-                <span>Start Outbound Queue Campaign</span>
-              </button>
-            ) : sendingState === "sending" ? (
-              <button
-                onClick={handlePauseSending}
-                className="px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-sm flex items-center space-x-2 cursor-pointer transition active:scale-98"
-              >
-                <Pause className="h-4 w-4 fill-white" />
-                <span>Pause Queue</span>
-              </button>
-            ) : (
-              <button
-                onClick={startSendingQueue}
-                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-sm flex items-center space-x-2 cursor-pointer transition active:scale-98"
-              >
-                <Play className="h-4 w-4 fill-white" />
-                <span>Resume Campaign</span>
-              </button>
-            )}
-
-            {sendingState !== "idle" && (
-              <button
-                onClick={handleStopSending}
-                className="px-5 py-3 bg-slate-900 border border-slate-950 text-slate-100 hover:bg-slate-800 rounded-lg font-bold text-sm flex items-center space-x-1.5 cursor-pointer transition active:scale-98"
-              >
-                <Square className="h-3.5 w-3.5 fill-white" />
-                <span>Stop</span>
-              </button>
-            )}
-
-            <div className="h-8 w-px bg-slate-200 hidden sm:block" />
-
-            {/* Quiet SMTP Verification */}
-            <button
-              onClick={handleVerifySMTP}
-              disabled={verifyingSmtp || !senderEmail || !appPassword}
-              className="px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 rounded-lg font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer"
-            >
-              {verifyingSmtp ? (
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5 text-slate-500" />
-              )}
-              <span>Quiet Verification Check</span>
-            </button>
-          </div>
-
-          {/* Handshake Status Badge */}
-          {smtpStatusMsg && (
-            <div className={`sm:w-80 p-4 rounded-xl border flex items-start space-x-3 text-xs leading-normal font-sans ${
-              smtpVerified === true 
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
-                : smtpVerified === false 
-                  ? "bg-rose-50 border-rose-200 text-rose-800" 
-                  : "bg-indigo-50 border-indigo-200 text-indigo-800"
-            }`}>
-              <div className="font-semibold">{smtpStatusMsg}</div>
-            </div>
-          )}
         </div>
 
         {/* BOTTOM METRICS */}
@@ -1040,24 +1071,23 @@ if (nextIdx < parsedRecipients.length && isSendingRef.current) {
           
           {/* Campaign stats summary & progress (Full Width) */}
           <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
-                <Terminal className="h-5 w-5 text-indigo-600" />
+                <Layers className="h-4 w-4 text-indigo-600" />
                 <h3 className="font-semibold text-slate-800">Campaign Dispatch Progress Metrics</h3>
               </div>
-              {stats.total > 0 && (
-                <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded">
-                  {currentIndex} / {stats.total} processed
-                </span>
-              )}
+              <span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                Active Queue: {currentIndex} / {stats.total}
+              </span>
             </div>
 
+            {/* Campaign progress bar */}
             <div className="space-y-2">
-              <div className="flex justify-between text-xs text-slate-500 font-medium">
-                <span>Progress</span>
-                <span>{stats.progressPercent}%</span>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Progress Bar</span>
+                <span className="font-mono font-bold text-slate-700">{stats.progressPercent}% Completed</span>
               </div>
-              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200/50">
+              <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden border border-slate-200 p-0.5">
                 <div 
                   className="bg-indigo-600 h-full rounded-full transition-all duration-300"
                   style={{ width: `${stats.progressPercent}%` }}
