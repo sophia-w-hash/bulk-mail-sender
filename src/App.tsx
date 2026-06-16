@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, ChangeEvent } from "react";
 import { 
   Mail, 
   Send, 
@@ -9,10 +9,13 @@ import {
   Play, 
   Pause, 
   Square, 
+  AlertCircle, 
   Eye, 
   EyeOff, 
+  RefreshCw, 
   HelpCircle, 
   Cpu, 
+  Info, 
   Clock, 
   FileSpreadsheet, 
   Layers,
@@ -40,27 +43,35 @@ export default function App() {
   // SMTP Config Local Persistence
   const [senderName, setSenderName] = useState(() => localStorage.getItem("bulk_sender_name") || "");
   const [senderEmail, setSenderEmail] = useState(() => localStorage.getItem("bulk_sender_email") || "");
-  const [appPassword, setAppPassword] = useState(() => localStorage.getItem("bulk_smtp_pass") || "");
-  const [smtpMode, setSmtpMode] = useState(() => localStorage.getItem("bulk_smtp_mode") || "auto");
+  const [appPassword, setAppPassword] = useState(() => localStorage.getItem("bulk_app_password") || "");
   const [showPassword, setShowPassword] = useState(false);
-  const [smtpVerified, setSmtpVerified] = useState<boolean | null>(null);
-  const [verifyingSmtp, setVerifyingSmtp] = useState(false);
-  const [smtpStatusMsg, setSmtpStatusMsg] = useState("");
 
-  // Recipient States
+  // Connection settings selection
+  const [smtpMode, setSmtpMode] = useState(() => localStorage.getItem("bulk_smtp_mode") || "auto");
+
+  // Email Template Configurations
+  const [subjectTemplate, setSubjectTemplate] = useState(
+    () => localStorage.getItem("bulk_subject") || "Festival Discount for {name}! ✨"
+  );
+  const [bodyTemplate, setBodyTemplate] = useState(
+    () => localStorage.getItem("bulk_body") || "Hi {name},\n\nWe are excited to share a special bulk discount just for your email: {email}.\n\nThank you for choosing our services!\n\nBest regards,\nYour Marketing Team"
+  );
+
+  // Raw Recipients pasting configuration
   const [rawRecipients, setRawRecipients] = useState(
-    "Aman Kumar, aman.k@example.com\nVijay Sharma, vijay.sharma@example.com\nSneha Patel, sneha.p@example.com"
+    () => localStorage.getItem("bulk_raw_recipients") || "Aman Kumar, aman.k@example.com\nVijay Sharma, vijay.sharma@example.com\nSneha Patel, sneha.p@example.com"
   );
   const [recipientFileHelp, setRecipientFileHelp] = useState("");
 
-  // Mail Content States
-  const [subjectTemplate, setSubjectTemplate] = useState("Festival Discount for {name}! ✨");
-  const [bodyTemplate, setBodyTemplate] = useState(
-    "Hi {name},\n\nWe are excited to share a special bulk discount just for your email: {email}.\n\nThank you for choosing our services!\n\nBest regards,\nYour Marketing Team"
-  );
-
-  // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(3); // default 3 seconds throttle/delay
+  // Campaign Scheduler State Managers
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    const saved = localStorage.getItem("bulk_current_index");
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  const [sendDelay, setSendDelay] = useState(() => {
+    const saved = localStorage.getItem("bulk_send_delay");
+    return saved ? parseInt(saved, 10) : 3;
+  });
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -71,249 +82,195 @@ export default function App() {
     localStorage.setItem("bulk_use_jitter", useJitter ? "true" : "false");
   }, [useJitter]);
 
-  // Queue references
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const isSendingRef = useRef<boolean>(false);
-  const sendingStateRef = useRef<"idle" | "sending" | "paused">("idle");
-  const delayTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Synchronize dynamic references for the loop effect
-  useEffect(() => {
-    sendingStateRef.current = sendingState;
-    isSendingRef.current = sendingState === "sending";
-  }, [sendingState]);
-
-  // Save Config to LocalStorage
+  // Sync simple SMTP strings to local memory for comfort reload
   useEffect(() => {
     localStorage.setItem("bulk_sender_name", senderName);
-  }, [senderName]);
-
-  useEffect(() => {
     localStorage.setItem("bulk_sender_email", senderEmail);
-  }, [senderEmail]);
-
-  useEffect(() => {
-    localStorage.setItem("bulk_smtp_pass", appPassword);
-  }, [appPassword]);
-
-  useEffect(() => {
+    localStorage.setItem("bulk_app_password", appPassword);
     localStorage.setItem("bulk_smtp_mode", smtpMode);
-  }, [smtpMode]);
+    localStorage.setItem("bulk_subject", subjectTemplate);
+    localStorage.setItem("bulk_body", bodyTemplate);
+    localStorage.setItem("bulk_raw_recipients", rawRecipients);
+    localStorage.setItem("bulk_send_delay", sendDelay.toString());
+    localStorage.setItem("bulk_current_index", currentIndex.toString());
+  }, [senderName, senderEmail, appPassword, smtpMode, subjectTemplate, bodyTemplate, rawRecipients, sendDelay, currentIndex]);
 
-  // Auto Reset Verification status if credentials change
-  useEffect(() => {
+  // Quick Inline Verification API connection trigger
+  const [verifyingSmtp, setVerifyingSmtp] = useState(false);
+  const [smtpVerified, setSmtpVerified] = useState<null | boolean>(null);
+  const [smtpStatusMsg, setSmtpStatusMsg] = useState("");
+
+  const handleVerifySMTP = async () => {
+    if (!senderEmail || !appPassword) {
+      setSmtpVerified(false);
+      setSmtpStatusMsg("Apna Email id aur 16-character ka App Password enter karein verify karne k liye.");
+      return;
+    }
+
+    setVerifyingSmtp(true);
     setSmtpVerified(null);
-    setSmtpStatusMsg("");
-  }, [senderName, senderEmail, appPassword, smtpMode]);
+    setSmtpStatusMsg("Connecting with Gmail SMTP Handshake Server...");
 
-  // Reset SMTP stats & Clear Input Cache (Logout)
-  const handleClearSMTPConfig = () => {
-    const confirmation = window.confirm("Are you sure you want to log out and clear all your SMTP details from this device?");
-    if (!confirmation) return;
+    try {
+      const response = await fetch("/api/verify-smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: senderEmail,
+          appPassword: appPassword,
+          smtpMode: smtpMode
+        }),
+      });
 
-    setSenderName("");
-    setSenderEmail("");
-    setAppPassword("");
-    setSmtpMode("auto");
-    setSmtpVerified(null);
-    setSmtpStatusMsg("");
-    
-    localStorage.removeItem("bulk_sender_name");
-    localStorage.removeItem("bulk_sender_email");
-    localStorage.removeItem("bulk_smtp_pass");
-    localStorage.removeItem("bulk_smtp_mode");
+      const data = await response.json();
 
-    alert("Logged out successfully! Credentials have been wiped.");
+      if (response.ok && data.success) {
+        setSmtpVerified(true);
+        setSmtpStatusMsg("Success: SMTP connection authorized! Mails securely linked.");
+      } else {
+        setSmtpVerified(false);
+        setSmtpStatusMsg(data.error || "Handshake rejected. Confirm your 16-Character App Password key.");
+      }
+    } catch (err: any) {
+      setSmtpVerified(false);
+      setSmtpStatusMsg("Network error: Could not contact your Node Server.");
+    } finally {
+      setVerifyingSmtp(false);
+    }
   };
 
   // Recipient Parsing Logic
   const parsedRecipients = useMemo((): Client[] => {
     if (!rawRecipients.trim()) return [];
-    
+
     return rawRecipients
       .split("\n")
-      .map((line, idx) => {
-        const cleaned = line.trim();
-        if (!cleaned) return null;
+      .map((line, i) => {
+        const parts = line.split(/[,\t;]/);
+        let name = "";
+        let email = "";
 
-        // Try comma split: Name, email
-        if (cleaned.includes(",")) {
-          const parts = cleaned.split(",");
-          const name = parts[0]?.trim() || "";
-          const email = parts[1]?.trim() || "";
-          if (email.includes("@")) {
-            return { name, email, index: idx };
-          }
+        if (parts.length >= 2) {
+          name = parts[0].trim();
+          email = parts[1].trim();
+        } else if (parts.length === 1 && parts[0].includes("@")) {
+          email = parts[0].trim();
+          name = email.split("@")[0];
         }
 
-        // Try clean email only
-        if (cleaned.includes("@")) {
-          const emailMatch = cleaned.match(/[^\s,;]+@[^\s,;]+/);
-          if (emailMatch) {
-            const email = emailMatch[0];
-            const name = email.split("@")[0];
-            return { name, email, index: idx };
-          }
-        }
-
-        return null;
+        return { email, name, index: i };
       })
-      .filter((item): item is Client => item !== null);
+      .filter((c) => c.email.includes("@"));
   }, [rawRecipients]);
-
-  // Spintax & Dynamic Content Generator Tools for Safe Inbox Delivery
-  const parseSpintax = (str: string): string => {
-    let output = str;
-    const spintaxRegex = /\{([^{}|]+(?:\|[^{}|]+)+)\}/g;
-    let limit = 0; // prevent absolute infinite loops
-    while (spintaxRegex.test(output) && limit < 100) {
-      output = output.replace(spintaxRegex, (match, choicesStr) => {
-        const choices = choicesStr.split('|');
-        return choices[Math.floor(Math.random() * choices.length)];
-      });
-      limit++;
-    }
-    return output;
-  };
-
-  const renderTemplateFull = (template: string, clientName: string, clientEmail: string): string => {
-    let result = parseSpintax(template);
-    const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const todayStr = new Date().toLocaleDateString('en-GB'); // "16/06/2026"
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false }); // "14:25:01"
-    
-    result = result
-      .replace(/{name}/g, clientName)
-      .replace(/{email}/g, clientEmail)
-      .replace(/{random_id}/g, randomHex)
-      .replace(/{date}/g, todayStr)
-      .replace(/{time}/g, timeStr);
-      
-    return result;
-  };
 
   // Synchronize dynamic status logs automatically in real-time when idle
   useEffect(() => {
     if (sendingState === "idle") {
-      setCurrentIndex(0);
       const list: LogEntry[] = parsedRecipients.map((cl, i) => ({
-        id: `${cl.email}-${i}-${Date.now()}`,
+        id: `row-${i}`,
         recipient: cl.email,
         name: cl.name,
-        subject: subjectTemplate.replace(/{name}/g, cl.name).replace(/{email}/g, cl.email),
-        status: "pending",
+        subject: subjectTemplate,
+        status: i < currentIndex ? "success" : "pending",
         timestamp: "Waiting...",
       }));
       setLogs(list);
     }
   }, [parsedRecipients, subjectTemplate, sendingState]);
 
-  // Verify SMTP Connection
-  const handleVerifySMTP = async () => {
-    if (!senderEmail || !appPassword) {
-      setSmtpVerified(false);
-      setSmtpStatusMsg("Please fill both Sender Gmail and 16-digit App Password first.");
-      return;
-    }
+  // Keep a live mutable reference state pointer for intervals to bypass closure freezing on loops
+  const isSendingRef = useRef(false);
+  const currentIndexRef = useRef(currentIndex);
 
-    setVerifyingSmtp(true);
-    setSmtpVerified(null);
-    setSmtpStatusMsg(`Connecting via ${smtpMode === "auto" ? "Direct SSL (465)" : smtpMode}...`);
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
 
-    try {
-      const response = await fetch("/api/verify-smtp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: senderEmail, appPassword, smtpMode }),
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setSmtpVerified(true);
-        setSmtpStatusMsg(data.message);
-      } else {
-        setSmtpVerified(false);
-        setSmtpStatusMsg(data.error || "Verification failed. Check your App Password or toggles.");
-      }
-    } catch (err: any) {
-      setSmtpVerified(false);
-      setSmtpStatusMsg(err.message || "Failed to make verify network request. Check connection.");
-    } finally {
-      setVerifyingSmtp(false);
-    }
+  const handlePauseSending = () => {
+    isSendingRef.current = false;
+    setSendingState("paused");
   };
 
-  const checkSmtpQuietly = async (): Promise<boolean> => {
-    try {
-      const response = await fetch("/api/verify-smtp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: senderEmail, appPassword, smtpMode }),
-      });
-      const data = await response.json();
-      return !!data.success;
-    } catch {
-      return false;
-    }
+  const handleStopSending = () => {
+    isSendingRef.current = false;
+    setSendingState("idle");
+    setCurrentIndex(0);
   };
 
-  // Core Sending Queue Loops
-  const startSendingQueue = async () => {
-    if (!senderEmail || !appPassword) {
-      alert("Please enter Sender Gmail and 16-digit App Password in the setup fields first.");
-      return;
-    }
+  const startSendingQueue = () => {
     if (parsedRecipients.length === 0) {
-      alert("No valid recipient emails found. Please provide a list of recipients.");
+      alert("Pehle valid list of client recipients enter karein.");
+      return;
+    }
+    if (!senderEmail || !appPassword) {
+      alert("Verify karein ki aapne sender address aur Gmail App Password daal diya hai.");
       return;
     }
 
-    if (smtpVerified !== true) {
-      const isOk = await checkSmtpQuietly();
-      if (!isOk) {
-        const goOn = window.confirm(
-          `Warning: SMTP Connection check failed on route. Make sure your 16-digit Gmail App Password is typed correctly. Do you want to try sending anyway?`
-        );
-        if (!goOn) return;
-      }
-    }
-
-    let startIndex = currentIndex;
-    if (currentIndex >= parsedRecipients.length) {
-      startIndex = 0;
-      setCurrentIndex(0);
-      setLogs((prev) => 
-        prev.map((log) => ({ ...log, status: "pending", timestamp: "Waiting...", error: undefined }))
-      );
-    }
-
-    setSendingState("sending");
     isSendingRef.current = true;
-    processNextItem(startIndex);
+    setSendingState("sending");
+
+    // Initialize/sync queue execution log tracker
+    if (currentIndexRef.current >= parsedRecipients.length) {
+      setCurrentIndex(0);
+      currentIndexRef.current = 0;
+    }
+
+    processNextItem();
   };
 
-  // Loop dispatch handler
-  const processNextItem = async (indexToProcess: number) => {
-    if (!isSendingRef.current || indexToProcess >= parsedRecipients.length) {
-      if (indexToProcess >= parsedRecipients.length) {
-        setSendingState("idle");
-        isSendingRef.current = false;
-        alert("🎉 Done! All bulk emails processed successfully.");
-      }
+  const processNextItem = async () => {
+    if (!isSendingRef.current) return;
+    const indexToProcess = currentIndexRef.current;
+
+    if (indexToProcess >= parsedRecipients.length) {
+      setSendingState("idle");
+      isSendingRef.current = false;
+      alert("Task Completed! Saari emails successfully delivered ho chuki hain.");
       return;
     }
 
     const currentClient = parsedRecipients[indexToProcess];
-    setCurrentIndex(indexToProcess);
 
+    // Helper Spintax Parser
+    const parseSpintax = (text: string) => {
+      const spintaxPattern = /\{([^{}]+)\}/g;
+      return text.replace(spintaxPattern, (match, optionsString) => {
+        if (optionsString.includes("|")) {
+          const choices = optionsString.split("|");
+          return choices[Math.floor(Math.random() * choices.length)];
+        }
+        return match;
+      });
+    };
+
+    // Helper to dynamically compile mail variables
+    const renderTemplateFull = (template: string, name: string, email: string) => {
+      const spintaxProcessed = parseSpintax(template);
+      const randomId = "ID-" + Math.random().toString(36).substring(2, 9).toUpperCase();
+      const dateLocal = new Date().toLocaleDateString();
+      const timeLocal = new Date().toLocaleTimeString();
+
+      return spintaxProcessed
+        .replace(/{name}/g, name)
+        .replace(/{email}/g, email)
+        .replace(/{random_id}/g, randomId)
+        .replace(/{date}/g, dateLocal)
+        .replace(/{time}/g, timeLocal);
+    };
+
+    const renderedSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
+    const bodyContentRaw = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
+    const bodyContentHtml = bodyContentRaw.replace(/\n/g, "<br />");
+
+    // Update active row log indicator
     setLogs((prev) => 
       prev.map((log, idx) => 
-        idx === indexToProcess ? { ...log, status: "sending", timestamp: "Sending..." } : log
+        idx === indexToProcess 
+        ? { ...log, status: "sending" as const, timestamp: new Date().toLocaleTimeString() } 
+        : log
       )
     );
-
-    const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
-    const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
 
     try {
       const response = await fetch("/api/send-mail", {
@@ -324,41 +281,30 @@ export default function App() {
           senderEmail,
           appPassword,
           recipientEmail: currentClient.email,
-          subject: customSubject,
-          text: customBody,
-          html: customBody.replace(/\n/g, "<br>"),
+          subject: renderedSubject,
+          text: bodyContentRaw,
+          html: bodyContentHtml,
           smtpMode,
         }),
       });
 
       const data = await response.json();
 
-      if (data.success) {
+      if (response.ok && data.success) {
         setLogs((prev) => 
           prev.map((log, idx) => 
             idx === indexToProcess 
-              ? { 
-                  ...log, 
-                  status: "success", 
-                  subject: customSubject,
-                  timestamp: new Date().toLocaleTimeString(), 
-                  error: undefined 
-                } 
-              : log
+            ? { ...log, status: "success" as const, timestamp: new Date().toLocaleTimeString() } 
+            : log
           )
         );
       } else {
+        const errMessage = data.error || "Internal mail dispatcher handshaking rejected.";
         setLogs((prev) => 
           prev.map((log, idx) => 
             idx === indexToProcess 
-              ? { 
-                  ...log, 
-                  status: "failed", 
-                  subject: customSubject,
-                  timestamp: new Date().toLocaleTimeString(),
-                  error: data.error || "Rejected by Google SMTP server." 
-                } 
-              : log
+            ? { ...log, status: "failed" as const, timestamp: new Date().toLocaleTimeString(), error: errMessage } 
+            : log
           )
         );
       }
@@ -366,99 +312,104 @@ export default function App() {
       setLogs((prev) => 
         prev.map((log, idx) => 
           idx === indexToProcess 
-            ? { 
-                ...log, 
-                status: "failed", 
-                subject: customSubject,
-                timestamp: new Date().toLocaleTimeString(),
-                error: err.message || "Failed network connection to mail server." 
-              } 
-            : log
+          ? { ...log, status: "failed" as const, timestamp: new Date().toLocaleTimeString(), error: err.message || "Failed server link" } 
+          : log
         )
       );
     }
 
+    // Move to next queue position with adjustable timer delay
     const nextIdx = indexToProcess + 1;
     setCurrentIndex(nextIdx);
 
     if (nextIdx < parsedRecipients.length && isSendingRef.current) {
-      let finalDelayMs = sendDelay * 1000;
+      // Calculate delay in milliseconds + random timing jitter factor if toggled
+      let actualWait = sendDelay * 1000;
       if (useJitter) {
-        const randomModifier = (Math.random() * 4 - 1.5) * 1000;
-        finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
+        const jitterVariance = Math.random() * 2000 - 1000; // adds of subtracts up to 1 second randomly
+        actualWait = Math.max(800, actualWait + jitterVariance);
       }
-
-      delayTimerRef.current = setTimeout(() => {
-        processNextItem(nextIdx);
-      }, finalDelayMs);
+      setTimeout(processNextItem, actualWait);
     } else if (nextIdx >= parsedRecipients.length) {
       setSendingState("idle");
+      isSendingRef.current = false;
+      alert("Hurray! Campaign successfully delivered completely to all inbox recipients safely!");
     }
   };
 
-  const handlePauseSending = () => {
-    isSendingRef.current = false;
-    setSendingState("paused");
-    if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
-  };
-
-  const handleStopSending = () => {
-    isSendingRef.current = false;
-    setSendingState("idle");
-    setCurrentIndex(0);
-    if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // CSV file uploader parser helper
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
-      if (text) {
-        setRawRecipients(text);
-        setRecipientFileHelp(`Successfully loaded CSV file (${file.name})!`);
-      }
+      setRawRecipients(text);
+      setRecipientFileHelp(`Successfully loaded CSV file (${file.name})!`);
     };
     reader.readAsText(file);
   };
 
+  // Formatted statistics to highlight sending outcomes
   const stats = useMemo(() => {
     const total = parsedRecipients.length;
-    const sentSuccess = logs.filter(l => l.status === "success").length;
-    const sentFailed = logs.filter(l => l.status === "failed").length;
-    const pendingCount = logs.filter(l => l.status === "pending" || l.status === "sending").length;
-    const progressPercent = total > 0 ? Math.round(((total - pendingCount) / total) * 100) : 0;
-    
+    const sentSuccess = logs.filter(log => log.status === "success").length;
+    const sentFailed = logs.filter(log => log.status === "failed").length;
+    const sendingCount = logs.filter(log => log.status === "sending").length;
+    const pendingCount = Math.max(0, total - sentSuccess - sentFailed);
+    const progressPercent = total > 0 ? Math.round(((sentSuccess + sentFailed) / total) * 100) : 0;
+
     return {
       total,
       sentSuccess,
       sentFailed,
+      sendingCount,
       pendingCount,
-      progressPercent
+      progressPercent,
     };
   }, [logs, parsedRecipients]);
+
+  // Command to logout / clear browser credentials
+  const handleClearSMTPConfig = () => {
+    if (window.confirm("Bhai kya aap sach me apna SMTP clear karke logout hona chahte hain?")) {
+      setSenderName("");
+      setSenderEmail("");
+      setAppPassword("");
+      setCurrentIndex(0);
+      setSmtpVerified(null);
+      setSmtpStatusMsg("");
+      localStorage.removeItem("bulk_sender_name");
+      localStorage.removeItem("bulk_sender_email");
+      localStorage.removeItem("bulk_app_password");
+      localStorage.removeItem("bulk_current_index");
+      alert("Credentials cleared safely from browser local cache!");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased pb-12">
       {/* 1. Sleek Navigation Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-sm">
-              <Mail className="h-6 w-6" id="header_icon" />
+            <div className="bg-indigo-600 p-2.5 rounded-xl text-white shadow-sm flex items-center justify-center">
+              <Mail className="h-5 w-5 animate-pulse" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">Bulk Mail Sender</h1>
-              <p className="text-xs text-slate-500 font-medium">Outbound Client SMTP Panel</p>
+              <h1 className="text-base font-extrabold tracking-tight text-slate-900 flex items-center space-x-1.5">
+                <span>Bulk Mail Sender</span>
+              </h1>
+              <p className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">
+                Outbound Client SMTP Panel
+              </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setShowHelpModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold transition cursor-pointer"
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold transition"
               id="help_trigger_btn"
             >
               <HelpCircle className="h-4 w-4" />
@@ -474,7 +425,7 @@ export default function App() {
       {/* Main Layout Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
         
-        {/* LAUNCHER GRID */}
+        {/* LAUNCHER GRID - Exact 4 rows side-by-side matching user alignment preferences */}
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 space-y-6">
           <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -575,7 +526,7 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left: Message Body */}
             <div className="space-y-1">
-              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5 font-sans">
+              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5">
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
                   Message Body
                 </label>
@@ -584,21 +535,21 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {name}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
                   >
                     +name
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {email}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
                   >
                     +email
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {random_id}")}
-                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition"
                     title="Bypasses Gmail duplicate spam filters (Generates custom unique code for every person)."
                   >
                     +unique_id
@@ -606,21 +557,21 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {date}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
                   >
                     +date
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {time}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
                   >
                     +time
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {Hi|Hello|Hey}")}
-                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition cursor-pointer"
+                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition"
                     title="Spintax format: Randomly chooses one option per email."
                   >
                     +spintax
@@ -637,7 +588,7 @@ export default function App() {
               />
             </div>
 
-            {/* Right: Recipients */}
+            {/* Right: Recipients (comma or newline) */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700">
@@ -693,10 +644,11 @@ export default function App() {
                     <span>Interval delay: {sendDelay}s per email</span>
                   </div>
                   
+                  {/* Advanced Mode dropdown inside quick access */}
                   <div className="flex items-center space-x-1 text-xs">
-                    <span className="text-slate-400 font-sans">Protocol:</span>
+                    <span className="text-slate-400">Protocol:</span>
                     <select
-                      className="bg-transparent border-none text-indigo-600 font-bold p-0 text-xs focus:ring-0 cursor-pointer focus:outline-none font-sans"
+                      className="bg-transparent border-none text-indigo-600 font-semibold p-0 text-xs focus:ring-0 cursor-pointer focus:outline-none"
                       value={smtpMode}
                       onChange={(e) => setSmtpMode(e.target.value)}
                       id="smtp_mode_select"
@@ -709,6 +661,7 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Range slider for throttle */}
                 <div className="space-y-1">
                   <input
                     type="range"
@@ -720,17 +673,18 @@ export default function App() {
                     onChange={(e) => setSendDelay(Number(e.target.value))}
                     id="delay_slider"
                   />
-                  <div className="flex justify-between text-[9px] text-slate-400 font-sans">
-                    <span>1s (Fast)</span>
-                    <span className="text-amber-600 font-bold">3-5s (Recommended)</span>
-                    <span>12s (Ultra Safe)</span>
+                  <div className="flex justify-between text-[9px] text-slate-400">
+                    <span>1s (Bohot Tez)</span>
+                    <span className="text-amber-600 font-semibold">3-5s (Safe range)</span>
+                    <span>12s (Slow & Safe)</span>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs font-sans">
+                {/* Jitter (Anti-Bot Pattern Randomizer) toggle */}
+                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs">
                   <div className="flex flex-col pr-2">
                     <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
-                      <Cpu className="h-3.5 w-3.5 text-emerald-600" />
+                      <Cpu className="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
                       <span>Smart Timing Randomizer (+Jitter)</span>
                     </span>
                     <span className="text-[10px] text-slate-500 leading-tight">Varies send delay randomly (breaks bot pattern) to inbox safely.</span>
@@ -746,7 +700,8 @@ export default function App() {
                   </label>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 font-sans">
+                {/* Action Trigger Buttons for Campaign */}
+                <div className="grid grid-cols-3 gap-2">
                   {sendingState !== "sending" ? (
                     <button
                       onClick={startSendingQueue}
@@ -759,7 +714,7 @@ export default function App() {
                       id="campaign_play_btn"
                     >
                       <Play className="h-4 w-4 fill-white shrink-0" />
-                      <span>{sendingState === "paused" ? "Resume" : "Send Mail"}</span>
+                      <span>{sendingState === "paused" ? "Resume Campaign" : "Send"}</span>
                     </button>
                   ) : (
                     <button
@@ -791,7 +746,7 @@ export default function App() {
 
             {/* Right Column: Logout Session */}
             <div className="space-y-1">
-              <div className="flex justify-between items-center font-sans">
+              <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700">
                   All Logout
                 </label>
@@ -799,19 +754,20 @@ export default function App() {
                   type="button"
                   onClick={handleVerifySMTP}
                   disabled={verifyingSmtp || !senderEmail || !appPassword}
-                  className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400 cursor-pointer"
+                  className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400"
                   id="verify_quick_trigger"
                 >
                   {verifyingSmtp ? "Verifying..." : "Verify Connection Link"}
                 </button>
               </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px] font-sans">
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px]">
                 <div>
-                  <p className="text-xs text-slate-650 leading-relaxed">
-                    Apne email credentials ko temporary cache se clear karne ke liye niche click karein.
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Apne email credentials ko fully temporary browser cache se clear karne k liye Logout dabayein.
                   </p>
                 </div>
 
+                {/* Action Button: Clear/Logout Credentials */}
                 <div className="space-y-2">
                   <button
                     onClick={handleClearSMTPConfig}
@@ -819,9 +775,10 @@ export default function App() {
                     id="clear_smtp_btn"
                   >
                     <LogOut className="h-3.5 w-3.5" />
-                    <span>Clear & Logout</span>
+                    <span>All Logout</span>
                   </button>
 
+                  {/* Real-time verification notice feed */}
                   {smtpStatusMsg && (
                     <div className={`text-xs font-semibold flex items-start space-x-1.5 p-2 rounded-lg border ${
                       smtpVerified === true ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-rose-50 text-rose-800 border-rose-200"
@@ -845,7 +802,9 @@ export default function App() {
         </div>
 
         {/* BOTTOM METRICS */}
-        <div className="mt-6 font-sans">
+        <div className="mt-6">
+          
+          {/* Campaign stats summary & progress (Full Width) */}
           <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -857,6 +816,7 @@ export default function App() {
               </span>
             </div>
 
+            {/* Campaign progress bar */}
             <div className="space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Progress Bar</span>
@@ -870,6 +830,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Bento statistics grids */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Success</div>
@@ -889,6 +850,7 @@ export default function App() {
               </div>
             </div>
           </section>
+
         </div>
       </main>
 
@@ -896,11 +858,13 @@ export default function App() {
       <AnimatePresence>
         {showHelpModal && (
           <div className="fixed inset-0 z-50 overflow-y-auto">
+            {/* Backdrop */}
             <div 
-              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity cursor-pointer" 
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
               onClick={() => setShowHelpModal(false)}
             />
 
+            {/* Modal Body */}
             <div className="flex min-h-full items-center justify-center p-4">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
