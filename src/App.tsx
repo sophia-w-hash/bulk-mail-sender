@@ -65,7 +65,7 @@ export default function App() {
   );
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(3); // default 3 seconds throttle/delay
+  const [sendDelay, setSendDelay] = useState(3);
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchFilter, setSearchFilter] = useState("");
@@ -257,12 +257,12 @@ export default function App() {
       return;
     }
 
-    // Verify SMTP is authenticated before starting massive campaign
+    // Verify SMTP is authenticated before starting campaign
     if (smtpVerified !== true) {
       const isOk = await checkSmtpQuietly();
       if (!isOk) {
         const goOn = window.confirm(
-          `Warning: SMTP Connection check failed on route. Make sure your 16-digit Gmail App Password is typed correctly. Do you want to try sending anyway?`
+          `Warning: SMTP Connection check failed. Make sure your 16-digit Gmail App Password is correct. Do you want to try sending anyway?`
         );
         if (!goOn) return;
       }
@@ -446,7 +446,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased pb-12">
-      {/* 1. Sleek Navigation Header */}
+      {/* Sleek Navigation Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -482,7 +482,7 @@ export default function App() {
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 space-y-6">
           <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <Settings className="h-5 w-5 text-indigo-600 animate-spin-slow" />
+              <Settings className="h-5 w-5 text-indigo-600" />
               <h2 className="font-bold text-slate-800 text-lg">Campaign Control Panel</h2>
             </div>
             <div className="text-xs text-slate-500 font-medium">
@@ -667,7 +667,6 @@ export default function App() {
                     <span>Interval delay: {sendDelay}s per email</span>
                   </div>
                   
-                  {/* Advanced Mode dropdown inside quick access */}
                   <div className="flex items-center space-x-1 text-xs">
                     <span className="text-slate-400">Protocol:</span>
                     <select
@@ -684,7 +683,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Range slider for throttle */}
                 <div className="space-y-1">
                   <input
                     type="range"
@@ -703,7 +701,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Action Trigger Buttons for Campaign */}
                 <div className="grid grid-cols-3 gap-2">
                   {sendingState !== "sending" ? (
                     <button
@@ -770,18 +767,16 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Action Button: Clear/Logout Credentials */}
                 <div className="space-y-2">
                   <button
                     onClick={handleClearSMTPConfig}
-                    className="w-full flex items-center justify-center space-x-2 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-200 hover:border-rose-300 rounded-lg font-bold text-sm transition cursor-pointer active:scale-98"
+                    className="w-full flex items-center justify-center space-x-2 py-2.5 bg-rose-55 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-200 hover:border-rose-300 rounded-lg font-bold text-sm transition cursor-pointer active:scale-98"
                     id="clear_smtp_btn"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     <span>All Logout</span>
                   </button>
 
-                  {/* Real-time verification notice feed */}
                   {smtpStatusMsg && (
                     <div className={`text-xs font-semibold flex items-start space-x-1.5 p-2 rounded-lg border ${
                       smtpVerified === true ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-rose-50 text-rose-800 border-rose-200"
@@ -807,7 +802,6 @@ export default function App() {
         {/* BOTTOM METRICS, PREVIEW & EVENT LOGS SYSTEM */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6 items-start">
           
-          {/* Live Render Preview Container (Cols 5) */}
           <section className="lg:col-span-5 bg-slate-900 text-slate-100 rounded-xl shadow-md border border-slate-800 p-5">
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-3">
               <div className="flex items-center space-x-2">
@@ -840,7 +834,6 @@ export default function App() {
             </div>
           </section>
 
-          {/* Campaign stats summary & progress (Cols 7) */}
           <section className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -852,7 +845,6 @@ export default function App() {
               </span>
             </div>
 
-            {/* Campaign progress bar */}
             <div className="space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Progress Bar</span>
@@ -866,7 +858,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bento statistics grids */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Success</div>
@@ -886,10 +877,9 @@ export default function App() {
               </div>
             </div>
           </section>
-
         </div>
 
-        {/* SECTION 5: REAL-TIME LOGS CONSOLE PANEL */}
+        {/* LOGS CONSOLE */}
         <div className="mt-6">
           <section className="bg-white rounded-xl shadow-xs border border-slate-200 p-5">
             <div className="flex sm:flex-row flex-col sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-4">
@@ -898,7 +888,6 @@ export default function App() {
                 <p className="text-xs text-slate-500 font-medium">Real-time terminal detailing delivery handshakes and outcomes</p>
               </div>
 
-              {/* Filter controls */}
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
@@ -936,7 +925,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Logs Table Area */}
             {filteredLogs.length === 0 ? (
               <div className="py-12 text-center text-slate-400 text-xs flex flex-col items-center justify-center space-y-2 font-mono">
                 <Terminal className="h-8 w-8 text-slate-300" />
@@ -952,7 +940,6 @@ export default function App() {
                       <th className="py-3 px-4">Rendered Subject</th>
                       <th className="py-3 px-4">Timestamp</th>
                       <th className="py-3 px-4">Delivery Status</th>
-                      <th className="py-3 px-4 text-right">Details</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-150 bg-white">
@@ -989,26 +976,15 @@ export default function App() {
                             )}
                             {log.status === "sending" && (
                               <span className="inline-flex items-center space-x-1 text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-150 font-semibold text-[10px]">
-                                <RefreshCw className="h-3 w-3 text-indigo-650 animate-spin" />
+                                <RefreshCw className="h-3 w-3 text-indigo-605 animate-spin" />
                                 <span>Sending...</span>
                               </span>
                             )}
                             {log.status === "pending" && (
                               <span className="inline-flex items-center space-x-1 text-slate-500 bg-slate-100 px-2 py-0.5 rounded font-medium text-[10px]">
                                 <Clock className="h-3 w-3 text-slate-400" />
-                                <span>In queue</span>
+                                <span>In Queue</span>
                               </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right text-[10px]">
-                            {log.error ? (
-                              <span className="text-rose-600 font-bold leading-relaxed" title={log.error}>
-                                Error: {log.error}
-                              </span>
-                            ) : log.status === "success" ? (
-                              <span className="text-emerald-600 font-bold">Mail Sent ✅</span>
-                            ) : (
-                              <span className="text-slate-400">—</span>
                             )}
                           </td>
                         </motion.tr>
@@ -1021,90 +997,6 @@ export default function App() {
           </section>
         </div>
       </main>
-
-      {/* GMAIL ACCESS HELP INSTRUCTION MODAL */}
-      <AnimatePresence>
-        {showHelpModal && (
-          <div className="fixed inset-0 z-50 overflow-y-auto">
-            {/* Backdrop */}
-            <div 
-              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
-              onClick={() => setShowHelpModal(false)}
-            />
-
-            {/* Modal Body */}
-            <div className="flex min-h-full items-center justify-center p-4">
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                className="relative transform overflow-hidden rounded-xl bg-white text-left shadow-xl transition-all w-full max-w-lg border border-slate-200"
-              >
-                <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <HelpCircle className="h-5 w-5 text-indigo-400" />
-                    <h3 className="font-bold text-base">Gmail App Password Setup</h3>
-                  </div>
-                  <button
-                    onClick={() => setShowHelpModal(false)}
-                    className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer transition"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="p-5 space-y-4 text-xs text-slate-700 leading-relaxed font-sans">
-                  <p>
-                    Google <strong>App Passwords</strong> are required for external bulk mail engines. Standard Gmail passwords will be rejected by security policies.
-                  </p>
-
-                  <div className="bg-indigo-50 text-indigo-900 p-3.5 rounded-lg border border-indigo-100 font-medium space-y-1">
-                    <p className="font-bold text-indigo-950 uppercase text-[10px] tracking-wider">Crucial Pre-requisite:</p>
-                    <p>Your Gmail account MUST have <strong>2-Step Verification (2FA)</strong> activated so Google allows generating Keys.</p>
-                  </div>
-
-                  <h4 className="font-bold text-slate-800 uppercase tracking-tight text-[10px] mt-2">How to get a 16-character password step-by-step:</h4>
-                  
-                  <ol className="list-decimal pl-4 space-y-2.5">
-                    <li>
-                      Go to your <a href="https://myaccount.google.com/" target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline">Google Account settings page</a>.
-                    </li>
-                    <li>
-                      Click on the <strong>Security</strong> tab on the left sidebar.
-                    </li>
-                    <li>
-                      Under <strong>"How you sign in to Google"</strong>, click on <strong>"2-Step Verification"</strong>.
-                    </li>
-                    <li>
-                      Scroll all the way down to the bottom of the page and click on <strong>"App passwords"</strong>.
-                    </li>
-                    <li>
-                      Enter a custom label name (e.g., <code>BulkMailSender</code>) and click on <strong>Create</strong>.
-                    </li>
-                    <li>
-                      Copy the generated <strong>16-character Yellow code</strong> (e.g., <code className="bg-amber-100 font-mono text-amber-900 px-1 font-bold">abcd efgh ijkl mnop</code>).
-                    </li>
-                    <li>
-                      Paste it exactly into the App Password box in our panel. Safe space removal is applied automatically!
-                    </li>
-                  </ol>
-
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400">Your key is stored safely on your device.</span>
-                    <button
-                      onClick={() => setShowHelpModal(false)}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-md font-semibold text-xs hover:bg-indigo-700 cursor-pointer transition shadow-xs"
-                    >
-                      I Got My Code
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-          </div>
-        )}
-      </AnimatePresence>
-
     </div>
   );
 }
