@@ -1,118 +1,129 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
-import fs from "fs";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
+import { createServer as createViteServer } from "vite";
 
-// Support both ES Modules and CommonJS environments
-const _filename = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
-const _dirname = typeof __dirname !== "undefined" ? __dirname : dirname(_filename);
+// Local cache to keep track of Gmail emails dispatched per sender within a sliding window
+// Allowed standard threshold is 27 sends within any 2 hours to avoid strict Google SMTP sensor block triggers.
+const sendHistoryCache: { [senderEmail: string]: number[] } = {};
 
-// Helper to configure a robust Gmail SMTP transporter based on user's environment network permissions
-function getGmailTransporter(email: string, appPassword: string, mode: string = "auto") {
-  // Strip any spaces from the 16-character google App Password (e.g., "abcd efgh ijkl mnop" -> "abcdefghijklmnop")
-  const cleanPassword = appPassword.replace(/\s+/g, "");
-
-  // Gmail SMTP configurations
-  if (mode === "465" || mode === "auto") {
-    return nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: email,
-        pass: cleanPassword,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000, // 10 seconds timeout
-    });
+function cleanAndGetRollingCount(senderEmail: string): number {
+  const now = Date.now();
+  const twoHoursMs = 2 * 60 * 60 * 1000;
+  
+  if (!sendHistoryCache[senderEmail]) {
+    sendHistoryCache[senderEmail] = [];
+    return 0;
   }
   
-  if (mode === "587") {
+  // Filter out timestamps older than 2 hours
+  sendHistoryCache[senderEmail] = sendHistoryCache[senderEmail].filter(
+    (timestamp) => now - timestamp < twoHoursMs
+  );
+  
+  return sendHistoryCache[senderEmail].length;
+}
+
+function recordSendInCache(senderEmail: string) {
+  if (!sendHistoryCache[senderEmail]) {
+    sendHistoryCache[senderEmail] = [];
+  }
+  sendHistoryCache[senderEmail].push(Date.now());
+}
+
+const app = express();
+app.use(express.json());
+
+// Transporter construction helper
+const getGmailTransporter = (
+  senderEmail: string,
+  appPassword: string,
+  smtpMode: string = "auto"
+) => {
+  // If specific Gmail API service helper is requested
+  if (smtpMode === "gmail") {
     return nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false, // TLS / STARTTLS
+      service: "gmail",
       auth: {
-        user: email,
-        pass: cleanPassword,
+        user: senderEmail,
+        pass: appPassword,
       },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000,
     });
   }
 
-  // legacy "gmail" helper
+  // Auto Port or Specific Port Mode
+  const port = smtpMode === "587" ? 587 : 465;
+  const secure = port === 465;
+
   return nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: port,
+    secure: secure,
     auth: {
-      user: email,
-      pass: cleanPassword,
+      user: senderEmail,
+      pass: appPassword,
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
-}
+};
 
-async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+// API Endpoint to check hourly/2-hourly remaining rolling limits
+app.post("/api/check-limit", (req, res) => {
+  const { senderEmail } = req.body;
+  if (!senderEmail) {
+    return res.status(400).json({ error: "Sender email is required." });
+  }
 
-  // Middleware for parsing JSON requests
-  app.use(express.json());
+  const activeCount = cleanAndGetRollingCount(senderEmail);
+  const maxLimit = 27; // Safe custom 2-hour sliding limit to prevent Google lockouts
+  const remaining = Math.max(0, maxLimit - activeCount);
+  
+  let nextResetTimeMs = 0;
+  if (sendHistoryCache[senderEmail] && sendHistoryCache[senderEmail].length > 0) {
+    // Expected oldest item expires precisely 2 hours after creation
+    nextResetTimeMs = sendHistoryCache[senderEmail][0] + (2 * 60 * 60 * 1000);
+  }
 
-  // 1. SMTP Credentials Verification Endpoint
-  app.post("/api/verify-smtp", async (req, res) => {
-    const { email, appPassword, smtpMode = "auto" } = req.body;
-
-    if (!email || !appPassword) {
-      return res.status(400).json({
-        success: false,
-        error: "Sender Email and 16-digit App Password are required.",
-      });
-    }
-
-    const transporter = getGmailTransporter(email, appPassword, smtpMode);
-
-    try {
-      await transporter.verify();
-      return res.json({
-        success: true,
-        message: "SMTP handshake completed successfully! Your SMTP link is fully authorized.",
-      });
-    } catch (error: any) {
-      console.error(`SMTP verification failed (mode: ${smtpMode}):`, error);
-      
-      let friendlyMessage = error.message || "Failed to authenticate with Gmail SMTP server. Check credentials.";
-      if (friendlyMessage.toLowerCase().includes("auth") || friendlyMessage.toLowerCase().includes("username") || error.code === "EAUTH") {
-        friendlyMessage = `Authentication failed: Please verify your 16-digit Gmail App Password. Make sure your Gmail address is correct, 2-Step Verification is enabled on your Google account, and you generated an "App Password" (not your normal Google account password).`;
-      } else if (friendlyMessage.toLowerCase().includes("timeout") || error.code === "ETIMEDOUT") {
-        friendlyMessage = `Connection Timed Out: Direct connection to smtp.gmail.com was blocked by network ports. Please toggle Connection Protocol to Port 587 or Nodemailer Gmail Engine to bypass firewall rules.`;
-      }
-
-      return res.status(400).json({
-        success: false,
-        error: friendlyMessage,
-        code: error.code || "AUTH_FAILED",
-      });
-    }
+  res.json({
+    sentInWindow: activeCount,
+    remaining: remaining,
+    allowed: remaining > 0,
+    nextResetTimeMs: nextResetTimeMs,
   });
+});
 
-  // 2. Transmit Single Custom Mail Endpoint
-  app.post("/api/send-mail", async (req, res) => {
-    const { senderName, senderEmail, appPassword, recipientEmail, subject, text, html, smtpMode = "auto" } = req.body;
+// API Endpoint to send simple, safe emails
+app.post("/api/send-mail", async (req, res) => {
+  const {
+    senderName,
+    senderEmail,
+    appPassword,
+    recipientEmail,
+    subject,
+    text,
+    html,
+    smtpMode,
+  } = req.body;
 
-    if (!senderEmail || !appPassword || !recipientEmail || !subject || (!text && !html)) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing required mail dispatch parameters. Ensure sender, credentials, recipient, subject and content are filled.",
-      });
-    }
+  if (!senderEmail || !appPassword || !recipientEmail || !subject || !text) {
+    return res.status(400).json({
+      success: false,
+      error: "Missing required inputs (sender email, app password, recipient, subject, or text).",
+    });
+  }
 
+  // Enforce the 2-hour safety threshold rate limit
+  const activeCount = cleanAndGetRollingCount(senderEmail);
+  if (activeCount >= 27) {
+    return res.status(429).json({
+      success: false,
+      error: "Gmail hourly account safety rate-limit reached. Please pause or wait to avoid Google SMTP temporary account suspensions.",
+    });
+  }
+
+  try {
     const transporter = getGmailTransporter(senderEmail, appPassword, smtpMode);
     const displayName = senderName ? senderName.trim() : senderEmail.split("@")[0];
 
@@ -130,66 +141,52 @@ async function startServer() {
         headers: {
           "X-Mailer": "Gmail Client Dispatch Utility",
           "X-Priority": "3", // Normal Priority
-          "X-Auto-Response-Suppress": "OOF, AutoReply", // Prevent mail server loop-backs
-          "Precedence": "bulk" // Carrier notification of bulk format to optimize scheduling
-        }
+        },
       });
+
+      // Record successful dispatch
+      recordSendInCache(senderEmail);
 
       return res.json({
         success: true,
         messageId: info.messageId,
-        message: `Successfully transmitted to ${recipientEmail}`,
+        response: info.response,
       });
-    } catch (error: any) {
-      console.error(`Mail transmit failed (mode: ${smtpMode}) for ${recipientEmail}:`, error);
-      
-      let friendlyMessage = error.message || `Failed to deliver email to ${recipientEmail}.`;
-      if (friendlyMessage.toLowerCase().includes("auth") || error.code === "EAUTH") {
-        friendlyMessage = "Gmail login authentication failed. Double check your 16-digit App Password.";
-      }
-
+    } catch (smtpErr: any) {
+      console.error("SMTP Client error:", smtpErr);
       return res.status(500).json({
         success: false,
-        error: friendlyMessage,
-        code: error.code,
+        error: smtpErr.message || "Failed authentication or mail drop rejection.",
       });
     }
-  });
-
-  // Vite development or production assets middleware
-  let distPath = path.join(process.cwd(), "dist");
-
-  // High-reliability path resolution fallback for Render or other cloud deployment environments:
-  if (!fs.existsSync(path.join(distPath, "index.html"))) {
-    // Fallback 1: If server.cjs is in dist/, _dirname will point directly to dist itself
-    if (fs.existsSync(path.join(_dirname, "index.html"))) {
-      distPath = _dirname;
-    } 
-    // Fallback 2: Check relative to bundled _dirname
-    else if (fs.existsSync(path.join(_dirname, "..", "dist", "index.html"))) {
-      distPath = path.join(_dirname, "..", "dist");
-    }
+  } catch (err: any) {
+    console.error("Nodemailer setup failed:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Unknown mail transport initialization issue.",
+    });
   }
+});
 
-  const isProd = process.env.NODE_ENV === "production" || _filename.endsWith("server.cjs");
-
-  if (!isProd) {
-    console.log("[Full-Stack Server] Starting in DEVELOPMENT mode (Vite Middleware)");
+// Serve frontend assets
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    console.log(`[Full-Stack Server] Starting in PRODUCTION mode (Serving Static Assets from ${distPath})`);
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
+  const PORT = 3000;
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Full-Stack Server] Running on http://localhost:${PORT} in ${process.env.NODE_ENV || "development"} mode`);
+    console.log(`Server is running beautifully on port ${PORT}`);
   });
 }
 
