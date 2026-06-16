@@ -504,25 +504,33 @@ export default function App() {
           )
         );
 
-        setErrorModalTitle("SMTP Transmission Error");
-        setErrorModalMessage(data.error || "Google SMTP server rejected the login. Please confirm your 16-digit Gmail App Password matches exactly.");
-        setErrorModalOpen(true);
-      }
-    } catch (err: any) {
-      // Stop dispatch loop
-      setSendingState("idle");
-      isSendingRef.current = false;
+        // NEW PARALLEL CODE (एक साथ 3 ईमेल भेजने के लिए रिप्लेसमेंट)
+const nextIdx = indexToProcess + 1;
+setCurrentIndex(nextIdx);
 
-      setLogs((prev) => 
-        prev.map((log, idx) => 
-          idx === indexToProcess 
-            ? { 
-                ...log, 
-                status: "failed", 
-                subject: customSubject,
-                timestamp: new Date().toLocaleTimeString(),
-                error: err.message || "Failed network connection to mail server." 
-              } 
+if (nextIdx < parsedRecipients.length && isSendingRef.current) {
+  let finalDelayMs = sendDelay * 1000;
+  if (useJitter) {
+    const randomModifier = (Math.random() * 4 - 1.5) * 1000;
+    finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
+  }
+
+  // अगर अगला इंडेक्स 3 का मल्टीपल है या आखिरी बैच है, तो यह डिले के बाद एक साथ 3 कनेक्टेड थ्रेड्स शुरू करेगा
+  delayTimerRef.current = setTimeout(() => {
+    // एक साथ 3-3 के बैच में रिकॉर्ड प्रोसेस करने के लिए थ्रेड्स शुरू करना
+    if (nextIdx % 3 === 0) {
+      for (let i = 0; i < 3; i++) {
+        const targetIdx = nextIdx + i;
+        if (targetIdx < parsedRecipients.length) {
+          processNextItem(targetIdx);
+        }
+      }
+    } else {
+      // सिंगल रन बैकअप
+      processNextItem(nextIdx);
+    }
+  }, finalDelayMs);
+}
             : log
         )
       );
