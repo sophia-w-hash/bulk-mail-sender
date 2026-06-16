@@ -370,7 +370,7 @@ export default function App() {
     if (nextIdx < parsedRecipients.length && isSendingRef.current) {
       delayTimerRef.current = setTimeout(() => {
         processNextItem(nextIdx);
-      }, sendDelay * 1000);
+      }, sendDelay * 300);
     } else if (nextIdx >= parsedRecipients.length) {
       setSendingState("idle");
     }
