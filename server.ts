@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
+import fs from "fs";
 
 // Helper to configure a robust Gmail SMTP transporter based on user's environment network permissions
 function getGmailTransporter(email: string, appPassword: string, mode: string = "auto") {
@@ -53,7 +54,7 @@ function getGmailTransporter(email: string, appPassword: string, mode: string = 
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Middleware for parsing JSON requests
   app.use(express.json());
@@ -140,14 +141,31 @@ async function startServer() {
   });
 
   // Vite development or production assets middleware
-  if (process.env.NODE_ENV !== "production") {
+  let distPath = path.join(process.cwd(), "dist");
+
+  // High-reliability path resolution fallback for Render or other cloud deployment environments:
+  if (!fs.existsSync(path.join(distPath, "index.html"))) {
+    // Fallback 1: If server.cjs is in dist/, __dirname will point directly to dist itself
+    if (fs.existsSync(path.join(__dirname, "index.html"))) {
+      distPath = __dirname;
+    } 
+    // Fallback 2: Check relative to bundled __dirname
+    else if (fs.existsSync(path.join(__dirname, "..", "dist", "index.html"))) {
+      distPath = path.join(__dirname, "..", "dist");
+    }
+  }
+
+  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(distPath, "index.html"));
+
+  if (!isProd) {
+    console.log("[Full-Stack Server] Starting in DEVELOPMENT mode (Vite Middleware)");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    console.log(`[Full-Stack Server] Starting in PRODUCTION mode (Serving Static Assets from ${distPath})`);
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
