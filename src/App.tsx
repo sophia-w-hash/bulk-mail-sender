@@ -888,9 +888,9 @@ export default function App() {
                 <div className="space-y-1">
                   <input
                     type="range"
-                    min="0.2"
+                    min="0.1"
                     max="10"
-                    step="0.2"
+                    step="0.1"
                     className="w-full accent-indigo-600 cursor-pointer"
                     value={sendDelay}
                     onChange={(e) => setSendDelay(Number(e.target.value))}
