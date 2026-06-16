@@ -155,7 +155,7 @@ async function startServer() {
     }
   }
 
-  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(distPath, "index.html"));
+  const isProd = process.env.NODE_ENV === "production" || __filename.endsWith("server.cjs");
 
   if (!isProd) {
     console.log("[Full-Stack Server] Starting in DEVELOPMENT mode (Vite Middleware)");
