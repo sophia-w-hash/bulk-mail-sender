@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, ChangeEvent } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   Mail, 
   Send, 
@@ -9,17 +9,12 @@ import {
   Play, 
   Pause, 
   Square, 
-  AlertCircle, 
   Eye, 
   EyeOff, 
-  RefreshCw, 
   HelpCircle, 
   Cpu, 
-  Info, 
   Clock, 
-  Search, 
   FileSpreadsheet, 
-  Terminal,
   Layers,
   LogOut
 } from "lucide-react";
@@ -169,7 +164,6 @@ export default function App() {
   // Spintax & Dynamic Content Generator Tools for Safe Inbox Delivery
   const parseSpintax = (str: string): string => {
     let output = str;
-    // Matches {abc|def|xyz} patterns containing a pipe character
     const spintaxRegex = /\{([^{}|]+(?:\|[^{}|]+)+)\}/g;
     let limit = 0; // prevent absolute infinite loops
     while (spintaxRegex.test(output) && limit < 100) {
@@ -183,17 +177,11 @@ export default function App() {
   };
 
   const renderTemplateFull = (template: string, clientName: string, clientEmail: string): string => {
-    // 1. Process Spintax choices first (e.g. {Hi|Hello|Hey})
     let result = parseSpintax(template);
-    
-    // 2. Generate random 6-character hex/alphanumeric code
     const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
-    // 3. Current Date & Time values
     const todayStr = new Date().toLocaleDateString('en-GB'); // "16/06/2026"
     const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false }); // "14:25:01"
     
-    // 4. Perform direct clean standard token replacements
     result = result
       .replace(/{name}/g, clientName)
       .replace(/{email}/g, clientEmail)
@@ -255,7 +243,6 @@ export default function App() {
     }
   };
 
-  // SMTP Connection Quick Checker
   const checkSmtpQuietly = async (): Promise<boolean> => {
     try {
       const response = await fetch("/api/verify-smtp", {
@@ -281,7 +268,6 @@ export default function App() {
       return;
     }
 
-    // Verify SMTP is authenticated before starting massive campaign
     if (smtpVerified !== true) {
       const isOk = await checkSmtpQuietly();
       if (!isOk) {
@@ -326,7 +312,6 @@ export default function App() {
       )
     );
 
-    // Render templates with full safety spintax and unique variables!
     const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
     const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
 
@@ -341,7 +326,6 @@ export default function App() {
           recipientEmail: currentClient.email,
           subject: customSubject,
           text: customBody,
-          // Generate html line break standard formatting for safe deliverability
           html: customBody.replace(/\n/g, "<br>"),
           smtpMode,
         }),
@@ -356,7 +340,7 @@ export default function App() {
               ? { 
                   ...log, 
                   status: "success", 
-                  subject: customSubject, // record the exact parsed subject sent to this user in logs
+                  subject: customSubject,
                   timestamp: new Date().toLocaleTimeString(), 
                   error: undefined 
                 } 
@@ -398,10 +382,8 @@ export default function App() {
     setCurrentIndex(nextIdx);
 
     if (nextIdx < parsedRecipients.length && isSendingRef.current) {
-      // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
       let finalDelayMs = sendDelay * 1000;
       if (useJitter) {
-        // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
         const randomModifier = (Math.random() * 4 - 1.5) * 1000;
         finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
       }
@@ -427,7 +409,6 @@ export default function App() {
     if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
   };
 
-  // Upload custom dynamic list of clients (.txt or .csv files)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -443,7 +424,6 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  // Formatted statistics to highlight sending outcomes
   const stats = useMemo(() => {
     const total = parsedRecipients.length;
     const sentSuccess = logs.filter(l => l.status === "success").length;
@@ -478,7 +458,7 @@ export default function App() {
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setShowHelpModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold transition"
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold transition cursor-pointer"
               id="help_trigger_btn"
             >
               <HelpCircle className="h-4 w-4" />
@@ -494,7 +474,7 @@ export default function App() {
       {/* Main Layout Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
         
-        {/* LAUNCHER GRID - Exact 4 rows side-by-side matching user alignment preferences */}
+        {/* LAUNCHER GRID */}
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 space-y-6">
           <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -595,7 +575,7 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left: Message Body */}
             <div className="space-y-1">
-              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5">
+              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5 font-sans">
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
                   Message Body
                 </label>
@@ -604,21 +584,21 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {name}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
                   >
                     +name
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {email}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
                   >
                     +email
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {random_id}")}
-                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition cursor-pointer"
                     title="Bypasses Gmail duplicate spam filters (Generates custom unique code for every person)."
                   >
                     +unique_id
@@ -626,21 +606,21 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {date}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
                   >
                     +date
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {time}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition cursor-pointer"
                   >
                     +time
                   </button>
                   <button
                     type="button"
                     onClick={() => setBodyTemplate(p => p + " {Hi|Hello|Hey}")}
-                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition"
+                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition cursor-pointer"
                     title="Spintax format: Randomly chooses one option per email."
                   >
                     +spintax
@@ -657,7 +637,7 @@ export default function App() {
               />
             </div>
 
-            {/* Right: Recipients (comma or newline) */}
+            {/* Right: Recipients */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700">
@@ -713,11 +693,10 @@ export default function App() {
                     <span>Interval delay: {sendDelay}s per email</span>
                   </div>
                   
-                  {/* Advanced Mode dropdown inside quick access */}
                   <div className="flex items-center space-x-1 text-xs">
-                    <span className="text-slate-400">Protocol:</span>
+                    <span className="text-slate-400 font-sans">Protocol:</span>
                     <select
-                      className="bg-transparent border-none text-indigo-600 font-semibold p-0 text-xs focus:ring-0 cursor-pointer focus:outline-none"
+                      className="bg-transparent border-none text-indigo-600 font-bold p-0 text-xs focus:ring-0 cursor-pointer focus:outline-none font-sans"
                       value={smtpMode}
                       onChange={(e) => setSmtpMode(e.target.value)}
                       id="smtp_mode_select"
@@ -730,7 +709,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Range slider for throttle */}
                 <div className="space-y-1">
                   <input
                     type="range"
@@ -742,18 +720,17 @@ export default function App() {
                     onChange={(e) => setSendDelay(Number(e.target.value))}
                     id="delay_slider"
                   />
-                  <div className="flex justify-between text-[9px] text-slate-400">
-                    <span>1s (Bohot Tez)</span>
-                    <span className="text-amber-600 font-semibold">3-5s (Safe range)</span>
-                    <span>12s (Slow & Safe)</span>
+                  <div className="flex justify-between text-[9px] text-slate-400 font-sans">
+                    <span>1s (Fast)</span>
+                    <span className="text-amber-600 font-bold">3-5s (Recommended)</span>
+                    <span>12s (Ultra Safe)</span>
                   </div>
                 </div>
 
-                {/* Jitter (Anti-Bot Pattern Randomizer) toggle */}
-                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs">
+                <div className="flex items-center justify-between bg-white p-2.5 border border-slate-200 rounded-lg shadow-2xs font-sans">
                   <div className="flex flex-col pr-2">
                     <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
-                      <Cpu className="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
+                      <Cpu className="h-3.5 w-3.5 text-emerald-600" />
                       <span>Smart Timing Randomizer (+Jitter)</span>
                     </span>
                     <span className="text-[10px] text-slate-500 leading-tight">Varies send delay randomly (breaks bot pattern) to inbox safely.</span>
@@ -769,8 +746,7 @@ export default function App() {
                   </label>
                 </div>
 
-                {/* Action Trigger Buttons for Campaign */}
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2 font-sans">
                   {sendingState !== "sending" ? (
                     <button
                       onClick={startSendingQueue}
@@ -783,7 +759,7 @@ export default function App() {
                       id="campaign_play_btn"
                     >
                       <Play className="h-4 w-4 fill-white shrink-0" />
-                      <span>{sendingState === "paused" ? "Resume Campaign" : "Send"}</span>
+                      <span>{sendingState === "paused" ? "Resume" : "Send Mail"}</span>
                     </button>
                   ) : (
                     <button
@@ -815,7 +791,7 @@ export default function App() {
 
             {/* Right Column: Logout Session */}
             <div className="space-y-1">
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center font-sans">
                 <label className="block text-sm font-bold text-slate-700">
                   All Logout
                 </label>
@@ -823,20 +799,19 @@ export default function App() {
                   type="button"
                   onClick={handleVerifySMTP}
                   disabled={verifyingSmtp || !senderEmail || !appPassword}
-                  className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400"
+                  className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400 cursor-pointer"
                   id="verify_quick_trigger"
                 >
                   {verifyingSmtp ? "Verifying..." : "Verify Connection Link"}
                 </button>
               </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px]">
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px] font-sans">
                 <div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Apne email credentials ko fully temporary browser cache se clear karne k liye Logout dabayein.
+                  <p className="text-xs text-slate-650 leading-relaxed">
+                    Apne email credentials ko temporary cache se clear karne ke liye niche click karein.
                   </p>
                 </div>
 
-                {/* Action Button: Clear/Logout Credentials */}
                 <div className="space-y-2">
                   <button
                     onClick={handleClearSMTPConfig}
@@ -844,10 +819,9 @@ export default function App() {
                     id="clear_smtp_btn"
                   >
                     <LogOut className="h-3.5 w-3.5" />
-                    <span>All Logout</span>
+                    <span>Clear & Logout</span>
                   </button>
 
-                  {/* Real-time verification notice feed */}
                   {smtpStatusMsg && (
                     <div className={`text-xs font-semibold flex items-start space-x-1.5 p-2 rounded-lg border ${
                       smtpVerified === true ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-rose-50 text-rose-800 border-rose-200"
@@ -871,9 +845,7 @@ export default function App() {
         </div>
 
         {/* BOTTOM METRICS */}
-        <div className="mt-6">
-          
-          {/* Campaign stats summary & progress (Full Width) */}
+        <div className="mt-6 font-sans">
           <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
@@ -885,7 +857,6 @@ export default function App() {
               </span>
             </div>
 
-            {/* Campaign progress bar */}
             <div className="space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Progress Bar</span>
@@ -899,7 +870,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bento statistics grids */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Success</div>
@@ -919,7 +889,6 @@ export default function App() {
               </div>
             </div>
           </section>
-
         </div>
       </main>
 
@@ -927,13 +896,11 @@ export default function App() {
       <AnimatePresence>
         {showHelpModal && (
           <div className="fixed inset-0 z-50 overflow-y-auto">
-            {/* Backdrop */}
             <div 
-              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity cursor-pointer" 
               onClick={() => setShowHelpModal(false)}
             />
 
-            {/* Modal Body */}
             <div className="flex min-h-full items-center justify-center p-4">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
