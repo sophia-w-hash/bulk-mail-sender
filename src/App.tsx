@@ -122,7 +122,7 @@ export default function App() {
   );
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(3); // default 3 seconds throttle/delay
+  const [sendDelay, setSendDelay] = useState(3); // default 1 seconds throttle/delay
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -380,7 +380,7 @@ export default function App() {
     setSendingState("sending");
     isSendingRef.current = true;
 
-    const concurrency = 3;
+    const concurrency = 5;
     let nextIndexToProcess = startIndex;
     let activeWorkersCount = 0;
 
@@ -930,9 +930,9 @@ export default function App() {
                 <div className="space-y-1">
                   <input
                     type="range"
-                    min="0.2"
-                    max="10"
-                    step="0.2"
+                    min="0.1"
+                    max="1"
+                    step="0.1"
                     className="w-full accent-indigo-600 cursor-pointer"
                     value={sendDelay}
                     onChange={(e) => setSendDelay(Number(e.target.value))}
