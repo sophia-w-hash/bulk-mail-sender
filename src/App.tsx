@@ -122,7 +122,7 @@ export default function App() {
   );
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(0.15); // default 0.15 seconds throttle/delay (25 emails in ~3.8 seconds), perfect for fast 1-by-1 delivery
+  const [sendDelay, setSendDelay] = useState(0.05); // default 0.05 seconds throttle/delay (25 emails in ~1.8 seconds), perfect for fast 1-by-1 delivery
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -519,11 +519,11 @@ export default function App() {
 
         if (nextIndexToProcess < parsedRecipients.length && isSendingRef.current) {
           // Calculate dynamic interval: Add random jitter to break uniform timing pattern if useJitter is enabled
-          let finalDelayMs = sendDelay * 1000;
+          let finalDelayMs = sendDelay * 600;
           if (useJitter) {
             // Randomly modify interval between -1.5 seconds and +2.5 seconds to bypass strict bot sensors
-            const randomModifier = (Math.random() * 4 - 1.5) * 1000;
-            finalDelayMs = Math.max(1000, finalDelayMs + randomModifier);
+            const randomModifier = (Math.random() * 4 - 1.5) * 600;
+            finalDelayMs = Math.max(600, finalDelayMs + randomModifier);
           }
 
           await new Promise<void>((resolve) => {
