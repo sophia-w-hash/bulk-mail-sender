@@ -131,6 +131,9 @@ export default function App() {
   const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">(() => (localStorage.getItem("bulk_html_layout") as "pristine" | "simple" | "raw") || "pristine");
   const [useAutoUnsubscribe, setUseAutoUnsubscribe] = useState(() => localStorage.getItem("bulk_use_unsubscribe") !== "false"); // default true
   const [useAntiSpamFootprint, setUseAntiSpamFootprint] = useState(() => localStorage.getItem("bulk_use_footprint") !== "false"); // default true
+  const [useZeroWidthPadding, setUseZeroWidthPadding] = useState(() => localStorage.getItem("bulk_use_zero_width") !== "false"); // default true
+  const [useSubjectVariant, setUseSubjectVariant] = useState(() => localStorage.getItem("bulk_use_subj_variant") !== "false"); // default true
+  const [neutralizeSpamWords, setNeutralizeSpamWords] = useState(() => localStorage.getItem("bulk_neutralize_spam") !== "false"); // default true
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -147,6 +150,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("bulk_use_footprint", useAntiSpamFootprint ? "true" : "false");
   }, [useAntiSpamFootprint]);
+
+  useEffect(() => {
+    localStorage.setItem("bulk_use_zero_width", useZeroWidthPadding ? "true" : "false");
+  }, [useZeroWidthPadding]);
+
+  useEffect(() => {
+    localStorage.setItem("bulk_use_subj_variant", useSubjectVariant ? "true" : "false");
+  }, [useSubjectVariant]);
+
+  useEffect(() => {
+    localStorage.setItem("bulk_neutralize_spam", neutralizeSpamWords ? "true" : "false");
+  }, [neutralizeSpamWords]);
 
   // Mails Limit Modals
   const [limitModalOpen, setLimitModalOpen] = useState(false);
@@ -288,6 +303,38 @@ export default function App() {
       .replace(/{date}/g, todayStr)
       .replace(/{time}/g, timeStr);
       
+    return result;
+  };
+
+  const applySpamBypassNeutralizer = (text: string): string => {
+    const replaceMap: Record<string, string> = {
+      "free": "f-r-e-e",
+      "earn money": "e*a*r*n money",
+      "make money": "m*a*k*e money",
+      "cash": "ca$h",
+      "millions": "mil-lions",
+      "lottery": "lot-tery",
+      "guaranteed": "guar-anteed",
+      "100% free": "100% f-r-e-e",
+      "click here": "cl*ck h*re",
+      "income": "inc-ome",
+      "usd": "U.S.D.",
+      "gift card": "g*ft card",
+      "work from home": "w*rk from h*me",
+      "investment": "invest-ment",
+      "get paid": "g*t p*id",
+      "crypto": "cryp-to",
+      "bitcoin": "bit-coin",
+      "loan": "lo-an",
+      "casino": "cas-ino",
+      "jackpot": "jack-pot"
+    };
+
+    let result = text;
+    Object.entries(replaceMap).forEach(([spamWord, bypassWord]) => {
+      const regex = new RegExp(`\\b${spamWord}\\b`, "gi");
+      result = result.replace(regex, bypassWord);
+    });
     return result;
   };
 
@@ -480,7 +527,12 @@ export default function App() {
 
       // Render templates with full safety spintax and unique variables!
       const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
-      const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
+      let customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
+
+      // If Neutralize Spam Words is enabled, auto neutralize before dispatch
+      if (neutralizeSpamWords) {
+        customBody = applySpamBypassNeutralizer(customBody);
+      }
 
       // Generate a unique transaction / unsubscribe footprint ID per recipient
       const randomUnsubId = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -500,6 +552,8 @@ export default function App() {
             htmlLayout,
             useAutoUnsubscribe,
             useAntiSpamFootprint,
+            useZeroWidthPadding,
+            useSubjectVariant,
             randomUnsubId
           }),
         });
@@ -1227,6 +1281,65 @@ export default function App() {
                       />
                       <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
                     </label>
+                  </div>
+
+                  {/* SPAM PROTECTOR ADVANCED TOOLS */}
+                  <div className="border-t border-slate-200/80 pt-2 pb-1">
+                    <span className="block text-[10px] font-bold text-indigo-700 uppercase tracking-widest mb-1.5 flex items-center space-x-1">
+                      <span>⚙️ Spam Protector Shield (सुरक्षा कवच)</span>
+                    </span>
+                    <div className="space-y-2">
+                      {/* Zero-width spacing */}
+                      <div className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded-lg shadow-3xs hover:border-slate-300 transition">
+                        <div className="flex flex-col pr-1.5">
+                          <span className="text-[11px] font-bold text-slate-700">Invisible Zero-Width Randomizer</span>
+                          <span className="text-[9.5px] text-slate-400 leading-tight">inserts invisible spaces in text to randomize DKIM & content hashes.</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer" 
+                            checked={useZeroWidthPadding}
+                            onChange={(e) => setUseZeroWidthPadding(e.target.checked)}
+                          />
+                          <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+
+                      {/* Subject Randomizer variant */}
+                      <div className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded-lg shadow-3xs hover:border-slate-300 transition">
+                        <div className="flex flex-col pr-1.5">
+                          <span className="text-[11px] font-bold text-slate-700">Subject Polymorphism Multi-Variant</span>
+                          <span className="text-[9.5px] text-slate-400 leading-tight">Varies tags and invisible spaces inside subjects so they are 100% unique.</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer" 
+                            checked={useSubjectVariant}
+                            onChange={(e) => setUseSubjectVariant(e.target.checked)}
+                          />
+                          <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+
+                      {/* Spam NLP bypass keyword filter */}
+                      <div className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded-lg shadow-3xs hover:border-slate-300 transition">
+                        <div className="flex flex-col pr-1.5">
+                          <span className="text-[11px] font-bold text-slate-700">Keyword Neutralizer NLP Shield</span>
+                          <span className="text-[9.5px] text-slate-400 leading-tight">Shields sales/pricing terms (like f-r-e-e) with benign symbols to bypass NLP scanners.</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer" 
+                            checked={neutralizeSpamWords}
+                            onChange={(e) => setNeutralizeSpamWords(e.target.checked)}
+                          />
+                          <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
