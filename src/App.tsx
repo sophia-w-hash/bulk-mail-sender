@@ -119,7 +119,11 @@ export default function App() {
   const [bodyTemplate, setBodyTemplate] = useState("");
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(5.0); // default 5.0 second delay between batches (10 emails per batch) for safe human-like intervals
+  const [sendDelay, setSendDelay] = useState(1.5); // default 1.5 second delay (faster safe default)
+  const [batchSize, setBatchSize] = useState(() => {
+    const saved = localStorage.getItem("bulk_batch_size");
+    return saved ? Number(saved) : 2; // defaults to 2 as requested (1 or 2)
+  });
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   
@@ -133,6 +137,11 @@ export default function App() {
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Sync batchSize state to local storage
+  useEffect(() => {
+    localStorage.setItem("bulk_batch_size", String(batchSize));
+  }, [batchSize]);
 
   // Sync deliverability states to local storage
   useEffect(() => {
@@ -561,7 +570,6 @@ export default function App() {
     setSendingState("sending");
     isSendingRef.current = true;
 
-    const batchSize = 2;
     let nextIndexToProcess = startIndex;
 
     const processSingleItem = async (indexToProcess: number): Promise<boolean> => {
@@ -979,10 +987,10 @@ export default function App() {
               </div>
               <input
                 type="text"
-                className={`w-full text-sm bg-slate-50 border rounded-lg py-2.5 px-3.5 focus:outline-none focus:ring-1 focus:bg-white transition ${
+                className={`w-full text-sm border-2 rounded-lg py-2.5 px-3.5 focus:outline-none transition ${
                   (subjectSpamWords.length > 0 || subjectHasLink)
-                    ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
-                    : "border-slate-200 focus:ring-indigo-500"
+                    ? "border-rose-600 focus:ring-rose-600 text-rose-950 bg-rose-100 font-bold"
+                    : "bg-slate-50 border-slate-200 focus:ring-indigo-500 focus:bg-white text-slate-800"
                 }`}
                 placeholder="Enter email subject line"
                 value={subjectTemplate}
@@ -1024,11 +1032,11 @@ export default function App() {
                 )}
               </div>
               <textarea
-                rows={8}
-                className={`w-full text-sm bg-slate-50 border rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:bg-white leading-relaxed resize-y font-sans transition ${
+                rows={9}
+                className={`w-full text-sm border-2 rounded-lg p-3.5 focus:outline-none leading-relaxed resize-y font-sans transition ${
                   (bodySpamWords.length > 0 || bodyHasLink)
-                    ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
-                    : "border-slate-200 focus:ring-indigo-500"
+                    ? "border-red-600 focus:ring-red-600 text-red-950 bg-red-100 font-bold"
+                    : "bg-slate-50 border-slate-200 focus:ring-indigo-500 focus:bg-white text-slate-800"
                 }`}
                 placeholder="Write message here..."
                 value={bodyTemplate}
@@ -1036,77 +1044,22 @@ export default function App() {
                 id="mail_body"
               />
               {bodySpamWords.length > 0 && (
-                <div className="text-[10.5px] text-rose-600 font-bold bg-rose-50 border border-rose-150 rounded-lg p-2.5 mt-2 leading-normal">
-                  ⚠️ Message Body contains spam trigger terms: <span className="underline font-extrabold">{bodySpamWords.join(", ")}</span> (स्पैम फ़ोल्डर से बचने के लिए इन्हें बदलें या 'Spam Protector' का उपयोग करें)
+                <div className="text-[10.5px] text-red-700 font-bold bg-red-100 border border-red-200 rounded-lg p-2.5 mt-2 leading-normal">
+                  ⚠️ Alert: Message Body contains spam trigger terms: <span className="underline font-extrabold">{bodySpamWords.join(", ")}</span> (इससे बचें! इन्हें बदलें या 'Spam Protector' का उपयोग करें)
                 </div>
               )}
               {bodyHasLink && (
-                <div className="text-[10.5px] text-rose-700 font-bold bg-rose-100/60 border border-rose-250 p-2.5 rounded-lg mt-2 flex items-center justify-between leading-normal shadow-3xs animate-pulse">
-                  <span>🚨 Link/Domain detected in Message Body! Plain Text (TXT) should not have any links for inbox delivery.</span>
+                <div className="text-[10.5px] text-red-700 font-bold bg-red-100 border border-red-200 p-2.5 rounded-lg mt-2 flex items-center justify-between leading-normal shadow-3xs animate-pulse">
+                  <span>🚨 Link/Domain detected in Message Body! Plain Text (TXT) must not have any links for direct inbox delivery.</span>
                   <button
                     type="button"
                     onClick={() => handleRemoveLinks("body")}
-                    className="bg-rose-700 hover:bg-rose-800 text-white rounded px-3 py-1.5 text-[10.5px] font-bold shadow-2xs transition shrink-0 cursor-pointer"
+                    className="bg-red-700 hover:bg-red-800 text-white rounded px-3 py-1.5 text-[10.5px] font-bold shadow-2xs transition shrink-0 cursor-pointer"
                   >
                     🧹 Remove Link
                   </button>
                 </div>
               )}
-
-              {/* Real-time Deliverability & Spam Score Widget */}
-              {(() => {
-                const analysis = getSpamAnalysis(subjectTemplate, bodyTemplate);
-                return (
-                  <div className="mt-2.5 p-3 rounded-xl border bg-white border-slate-200 shadow-2xs space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-1.5">
-                        <span className="text-xs font-bold text-slate-700">Inbox Health Analysis:</span>
-                        <span className={`text-[10.5px] px-2 py-0.5 rounded-full font-bold text-white shadow-3xs ${
-                          analysis.level === "good" ? "bg-emerald-600" :
-                          analysis.level === "medium" ? "bg-amber-500" : "bg-rose-500"
-                        }`}>
-                          {analysis.score}% {analysis.level === "good" ? "High (Inbox)" : analysis.level === "medium" ? "Medium (Risk)" : "High Spam Threat"}
-                        </span>
-                      </div>
-                      <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider font-mono">Live Scanner</span>
-                    </div>
-
-                    {/* Progress Bar meter */}
-                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          analysis.level === "good" ? "bg-emerald-500" :
-                          analysis.level === "medium" ? "bg-amber-400" : "bg-rose-500"
-                        }`}
-                        style={{ width: `${analysis.score}%` }}
-                      ></div>
-                    </div>
-
-                    {analysis.issues.length > 0 ? (
-                      <div className="space-y-1 pt-1 border-t border-slate-50">
-                        <span className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wider">How to secure INBOX delivery:</span>
-                        <ul className="space-y-1">
-                          {analysis.issues.map((issue, i) => (
-                            <li key={i} className="text-[11px] text-slate-600 flex items-start space-x-1 leading-tight">
-                              <span className="text-rose-500 font-bold shrink-0">⚠️</span>
-                              <span>{issue}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : (
-                      <div className="text-[11px] text-emerald-800 font-semibold bg-emerald-50/50 p-2 rounded-lg border border-emerald-100 leading-tight">
-                        🎉 Excellent! Your campaign has 100% deliverability health. No spam words or duplicate risk factors found!
-                      </div>
-                    )}
-
-                    {/* Bilingual tip */}
-                    <p className="text-[10.5px] text-slate-500 leading-tight italic pt-1 border-t border-slate-50 pt-1.5">
-                      <strong>💡 Tips:</strong> {analysis.level === "good" ? "आपका ईमेल बिल्कुल सुरक्षित है! Mails direct client inbox में लैंड करेंगे।" : "प्रत्येक व्यक्ति का ईमेल अलग होने के लिए संदेश में '{random_id}' का प्रयोग करें, ताकि एंटी-स्पैम फ़िल्टर्स बाईपास हो सकें।"}
-                    </p>
-                  </div>
-                );
-              })()}
             </div>
 
             {/* Right: Recipients (comma or newline) */}
@@ -1162,7 +1115,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700">
                     <Clock className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>Batch Delay: {sendDelay}s (10 mails/batch)</span>
+                    <span>Interval: {sendDelay}s (Batch size: {batchSize})</span>
                   </div>
                   
                   {/* Advanced Mode dropdown inside quick access */}
@@ -1179,6 +1132,40 @@ export default function App() {
                       <option value="587">Port 587 TLS</option>
                       <option value="gmail">Gmail Service Helper</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* 1-1 and 2-2 Toggle selectors as requested */}
+                <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">Send Mode (एक साथ ईमेल सेंडिंग):</span>
+                    <span className="text-[10px] text-indigo-600 font-bold font-mono">Anti-Spam Active</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBatchSize(1)}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${
+                        batchSize === 1
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span>1-1 (1 by 1)</span>
+                      <span className="text-[9px] opacity-80 font-normal">Super Safe • 0 Spam</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBatchSize(2)}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${
+                        batchSize === 2
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span>2-2 (2 by 2)</span>
+                      <span className="text-[9px] opacity-80 font-normal">Fast & Secure</span>
+                    </button>
                   </div>
                 </div>
 
