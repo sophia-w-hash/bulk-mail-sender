@@ -135,32 +135,8 @@ async function startServer() {
     let finalSubject = subject;
     let finalPlaintext = text || "";
 
-    // 1. Invisible zero-width unicode layout to randomize cryptographic hash signatures
-    if (useZeroWidthPadding) {
-      const zwChars = ["\u200B", "\u200C", "\u200D"];
-      let randomizedText = "";
-      for (const char of finalPlaintext) {
-        randomizedText += char;
-        // 12% probability of inserting an invisible unicode separator
-        if (Math.random() < 0.12) {
-          randomizedText += zwChars[Math.floor(Math.random() * zwChars.length)];
-        }
-      }
-      finalPlaintext = randomizedText;
-    }
-
-    // 2. Subject variation logic to bypass duplication heuristics
-    if (useSubjectVariant) {
-      const suffixes = ["", " •", " ✨", " 🌟", " ✅", " ✉️", " 📨", ` [R: ${randomUnsubId || "OK"}]`];
-      const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-      finalSubject = `${subject}${randomSuffix}`;
-
-      // Insert zero-width invisible character inside subject as well
-      const zwChars = ["\u200B", "\u200C", "\u200D"];
-      const charToInsert = zwChars[Math.floor(Math.random() * zwChars.length)];
-      const idx = Math.floor(Math.random() * (finalSubject.length || 1));
-      finalSubject = finalSubject.slice(0, idx) + charToInsert + finalSubject.slice(idx);
-    }
+    // Absolutely no auto extra lines, characters, zero-width separators or suffixes are added
+    // so that the email body and subject are transmitted 100% cleanly as entered by the user.
 
     let finalHtml: string | undefined = undefined;
 
