@@ -15,42 +15,39 @@ function getGmailTransporter(email: string, appPassword: string, mode: string = 
   // Strip any spaces from the 16-character google App Password (e.g., "abcd efgh ijkl mnop" -> "abcdefghijklmnop")
   const cleanPassword = appPassword.replace(/\s+/g, "");
 
-  // Gmail SMTP configurations
+  // Gmail SMTP configurations - Enable Native Connection Pooling for High Performance & Stable Concurrency
+  const poolConfig: any = {
+    host: "smtp.gmail.com",
+    pool: true, // Reuse SMTP connection sockets
+    maxConnections: 25, // Allow up to 25 parallel worker connections
+    maxMessages: 500, // Recycle connection socket after 500 emails to prevent connection stales
+    auth: {
+      user: email,
+      pass: cleanPassword,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+    connectionTimeout: 15000, // 15 seconds timeout
+  };
+
   if (mode === "465" || mode === "auto") {
-    return nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: email,
-        pass: cleanPassword,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000, // 10 seconds timeout
-    });
+    poolConfig.port = 465;
+    poolConfig.secure = true;
+    return nodemailer.createTransport(poolConfig);
   }
   
   if (mode === "587") {
-    return nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false, // TLS / STARTTLS
-      auth: {
-        user: email,
-        pass: cleanPassword,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000,
-    });
+    poolConfig.port = 587;
+    poolConfig.secure = false; // TLS / STARTTLS
+    return nodemailer.createTransport(poolConfig);
   }
 
-  // legacy "gmail" helper
+  // legacy "gmail" helper with connection pooling
   return nodemailer.createTransport({
     service: "gmail",
+    pool: true,
+    maxConnections: 25,
     auth: {
       user: email,
       pass: cleanPassword,
@@ -239,12 +236,17 @@ async function startServer() {
     }
 
     try {
+      const uniqueId = `${Math.random().toString(36).substring(2, 9).toUpperCase()}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+      const domain = senderEmail.includes("@") ? senderEmail.split("@")[1] : "gmail.com";
+      const customMessageId = `<${uniqueId}@${domain}>`;
+
       const info = await transporter.sendMail({
         from: `"${displayName}" <${senderEmail}>`,
         to: recipientEmail,
         subject: finalSubject,
         text: finalPlaintext,
         html: finalHtml,
+        messageId: customMessageId,
         // Standard user-agent headers mimicking common desktop clients (Thunderbird 115) 
         // to pass SPF, DKIM & Spam filters perfectly. Absolutely no "Precedence: bulk" or spammy traces.
         headers: {
