@@ -101,10 +101,10 @@ export default function App() {
   const [passcodeError, setPasscodeError] = useState("");
 
   // SMTP Config Local Persistence
-  const [senderName, setSenderName] = useState(() => localStorage.getItem("bulk_sender_name") || "");
-  const [senderEmail, setSenderEmail] = useState(() => localStorage.getItem("bulk_sender_email") || "");
-  const [appPassword, setAppPassword] = useState(() => localStorage.getItem("bulk_smtp_pass") || "");
-  const [smtpMode, setSmtpMode] = useState(() => localStorage.getItem("bulk_smtp_mode") || "auto");
+  const [senderName, setSenderName] = useState("");
+  const [senderEmail, setSenderEmail] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+  const [smtpMode, setSmtpMode] = useState("auto");
   const [showPassword, setShowPassword] = useState(false);
   const [smtpVerified, setSmtpVerified] = useState<boolean | null>(null);
   const [verifyingSmtp, setVerifyingSmtp] = useState(false);
@@ -124,7 +124,7 @@ export default function App() {
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   
   // Deliverability and Spam Protection States
-  const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">(() => (localStorage.getItem("bulk_html_layout") as "pristine" | "simple" | "raw") || "raw"); // Default to raw (plain text) for direct high inbox-delivery TXT
+  const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">("raw"); // Default strictly to raw (plain text) for direct high inbox-delivery TXT
   const [useAutoUnsubscribe, setUseAutoUnsubscribe] = useState(() => localStorage.getItem("bulk_use_unsubscribe") === "true"); // default false to avoid auto extra lines
   const [useAntiSpamFootprint, setUseAntiSpamFootprint] = useState(() => localStorage.getItem("bulk_use_footprint") === "true"); // default false to avoid auto extra lines
   const [useZeroWidthPadding, setUseZeroWidthPadding] = useState(() => localStorage.getItem("bulk_use_zero_width") !== "false"); // default true
@@ -431,6 +431,33 @@ export default function App() {
   const subjectSpamWords = useMemo(() => getSpamKeywords(subjectTemplate), [subjectTemplate]);
   const bodySpamWords = useMemo(() => getSpamKeywords(bodyTemplate), [bodyTemplate]);
 
+  const subjectHasLink = useMemo(() => {
+    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/i;
+    return linkRegex.test(subjectTemplate);
+  }, [subjectTemplate]);
+
+  const bodyHasLink = useMemo(() => {
+    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/i;
+    return linkRegex.test(bodyTemplate);
+  }, [bodyTemplate]);
+
+  const handleRemoveLinks = (target: "subject" | "body" | "both") => {
+    const strip = (val: string) => {
+      let cleaned = val;
+      cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, "");
+      cleaned = cleaned.replace(/www\.[^\s]+/gi, "");
+      cleaned = cleaned.replace(/\b[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/gi, "");
+      return cleaned.trim();
+    };
+
+    if (target === "subject" || target === "both") {
+      setSubjectTemplate(prev => strip(prev));
+    }
+    if (target === "body" || target === "both") {
+      setBodyTemplate(prev => strip(prev));
+    }
+  };
+
   // Synchronize dynamic status logs automatically in real-time when idle
   useEffect(() => {
     if (sendingState === "idle") {
@@ -517,6 +544,11 @@ export default function App() {
       return;
     }
 
+    if (subjectHasLink || bodyHasLink) {
+      alert("❌ Templates contain Links/URLs! (ईमेल में लिंक होने पर वह स्पैम फोल्डर में जा सकता है। कृपया '🧹 Auto Remove All Links' का उपयोग करके इन्हें हटाएँ।)");
+      return;
+    }
+
     let startIndex = currentIndex;
     if (currentIndex >= parsedRecipients.length) {
       startIndex = 0;
@@ -529,7 +561,7 @@ export default function App() {
     setSendingState("sending");
     isSendingRef.current = true;
 
-    const batchSize = 10;
+    const batchSize = 2;
     let nextIndexToProcess = startIndex;
 
     const processSingleItem = async (indexToProcess: number): Promise<boolean> => {
@@ -939,16 +971,16 @@ export default function App() {
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_subject">
                   Subject <span className="text-xs font-normal text-slate-400 font-mono">({`{name}`} will parse name)</span>
                 </label>
-                {subjectSpamWords.length > 0 && (
+                {(subjectSpamWords.length > 0 || subjectHasLink) && (
                   <span className="text-[10px] text-rose-600 font-bold flex items-center space-x-1 animate-pulse">
-                    <span>⚠️ Spam Word Detected! (स्पैम शब्द मिला)</span>
+                    <span>⚠️ Spam/Link Alert! (स्पैम/लिंक चेतावनी)</span>
                   </span>
                 )}
               </div>
               <input
                 type="text"
                 className={`w-full text-sm bg-slate-50 border rounded-lg py-2.5 px-3.5 focus:outline-none focus:ring-1 focus:bg-white transition ${
-                  subjectSpamWords.length > 0
+                  (subjectSpamWords.length > 0 || subjectHasLink)
                     ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
                     : "border-slate-200 focus:ring-indigo-500"
                 }`}
@@ -962,6 +994,18 @@ export default function App() {
                   ⚠️ Subject contains spam trigger terms: <span className="underline font-extrabold">{subjectSpamWords.join(", ")}</span> (इससे बचें या सिंबल लगायें)
                 </div>
               )}
+              {subjectHasLink && (
+                <div className="text-[10.5px] text-rose-700 font-bold bg-rose-100/60 border border-rose-250 p-2.5 rounded-lg mt-1.5 flex items-center justify-between leading-normal shadow-3xs animate-pulse">
+                  <span>🚨 Link/Domain detected in Subject! Mails with links get blocked in SPAM.</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveLinks("subject")}
+                    className="bg-rose-700 hover:bg-rose-800 text-white rounded px-3 py-1.5 text-[10.5px] font-bold shadow-2xs transition shrink-0 cursor-pointer"
+                  >
+                    🧹 Remove Link
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -973,16 +1017,16 @@ export default function App() {
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
                   Message Body
                 </label>
-                {bodySpamWords.length > 0 && (
+                {(bodySpamWords.length > 0 || bodyHasLink) && (
                   <span className="text-[10px] text-rose-600 font-bold flex items-center space-x-1 animate-pulse">
-                    <span>⚠️ Spam Content Warning (स्पैम चेतावनी)</span>
+                    <span>⚠️ Spam/Link Alert! (स्पैम/लिंक चेतावनी)</span>
                   </span>
                 )}
               </div>
               <textarea
                 rows={8}
                 className={`w-full text-sm bg-slate-50 border rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:bg-white leading-relaxed resize-y font-sans transition ${
-                  bodySpamWords.length > 0
+                  (bodySpamWords.length > 0 || bodyHasLink)
                     ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
                     : "border-slate-200 focus:ring-indigo-500"
                 }`}
@@ -994,6 +1038,18 @@ export default function App() {
               {bodySpamWords.length > 0 && (
                 <div className="text-[10.5px] text-rose-600 font-bold bg-rose-50 border border-rose-150 rounded-lg p-2.5 mt-2 leading-normal">
                   ⚠️ Message Body contains spam trigger terms: <span className="underline font-extrabold">{bodySpamWords.join(", ")}</span> (स्पैम फ़ोल्डर से बचने के लिए इन्हें बदलें या 'Spam Protector' का उपयोग करें)
+                </div>
+              )}
+              {bodyHasLink && (
+                <div className="text-[10.5px] text-rose-700 font-bold bg-rose-100/60 border border-rose-250 p-2.5 rounded-lg mt-2 flex items-center justify-between leading-normal shadow-3xs animate-pulse">
+                  <span>🚨 Link/Domain detected in Message Body! Plain Text (TXT) should not have any links for inbox delivery.</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveLinks("body")}
+                    className="bg-rose-700 hover:bg-rose-800 text-white rounded px-3 py-1.5 text-[10.5px] font-bold shadow-2xs transition shrink-0 cursor-pointer"
+                  >
+                    🧹 Remove Link
+                  </button>
                 </div>
               )}
 
@@ -1230,34 +1286,20 @@ export default function App() {
               <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-4">
                 {/* 1. Layout selection */}
                 <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <span className="text-xs font-bold text-slate-600 flex items-center space-x-1">
-                      <span>Email Design Layout:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
+                      <span>Email Delivery Format:</span>
                     </span>
-                    <span className="text-[10px] text-indigo-600 font-semibold font-mono">Select Output</span>
+                    <span className="text-[10px] text-emerald-600 font-extrabold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full uppercase tracking-wider font-sans">TXT Output Active</span>
                   </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(["pristine", "simple", "raw"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setHtmlLayout(mode)}
-                        className={`text-[11px] py-2 px-1.5 rounded-lg border font-bold transition flex flex-col items-center justify-center space-y-0.5 text-center cursor-pointer ${
-                          htmlLayout === mode
-                            ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
-                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                        }`}
-                        title={
-                          mode === "pristine" ? "Generates clean formal business card styling templates" :
-                          mode === "simple" ? "Basic line-break HTML layout" : "Pure text email (No HTML code, maximally safe, bypasses all spam filters)"
-                        }
-                      >
-                        <span className="capitalize">{mode === "raw" ? "Plain Text" : mode}</span>
-                        <span className="text-[8px] opacity-80 font-normal">
-                          {mode === "pristine" ? "Professional" : mode === "simple" ? "Compact" : "100% Safe"}
-                        </span>
-                      </button>
-                    ))}
+                  <div className="bg-emerald-50/70 border border-emerald-200/60 rounded-xl p-3 flex items-start space-x-3 shadow-3xs">
+                    <div className="bg-emerald-600 text-white rounded-lg p-2 shrink-0">
+                      <ShieldCheck className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-[12px] font-bold text-slate-800 leading-tight">Plain Text (TXT Only) Mode Locked</h4>
+                      <p className="text-[10px] text-slate-500 leading-normal mt-0.5">As requested, HTML has been disabled. Letters are sent strictly as raw organic TXT with 0 links or auto footers to guarantee absolute direct-to-inbox delivery.</p>
+                    </div>
                   </div>
                 </div>
 
