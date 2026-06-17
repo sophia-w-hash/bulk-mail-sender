@@ -357,8 +357,8 @@ export default function App() {
             htmlLayout: "raw", // Locked strictly to RAW TXT for safe inbox delivery
             useAutoUnsubscribe: false,
             useAntiSpamFootprint: false,
-            useZeroWidthPadding: true,
-            useSubjectVariant: true,
+            useZeroWidthPadding: false,
+            useSubjectVariant: false,
             randomUnsubId: Math.random().toString(36).substring(2, 8).toUpperCase()
           }),
         });
