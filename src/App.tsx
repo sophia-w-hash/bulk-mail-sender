@@ -111,26 +111,22 @@ export default function App() {
   const [smtpStatusMsg, setSmtpStatusMsg] = useState("");
 
   // Recipient States
-  const [rawRecipients, setRawRecipients] = useState(
-    "Aman Kumar, aman.k@example.com\nVijay Sharma, vijay.sharma@example.com\nSneha Patel, sneha.p@example.com"
-  );
+  const [rawRecipients, setRawRecipients] = useState("");
   const [recipientFileHelp, setRecipientFileHelp] = useState("");
 
   // Mail Content States
-  const [subjectTemplate, setSubjectTemplate] = useState("Festival Discount for {name}! ✨");
-  const [bodyTemplate, setBodyTemplate] = useState(
-    "Hi {name},\n\nWe are excited to share a special bulk discount just for your email: {email}.\n\nThank you for choosing our services!\n\nBest regards,\nYour Marketing Team"
-  );
+  const [subjectTemplate, setSubjectTemplate] = useState("");
+  const [bodyTemplate, setBodyTemplate] = useState("");
 
   // Sending Process / Queue States
-  const [sendDelay, setSendDelay] = useState(1.0); // default 1.0 second delay between batches (10 emails per batch)
+  const [sendDelay, setSendDelay] = useState(5.0); // default 5.0 second delay between batches (10 emails per batch) for safe human-like intervals
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
   
   // Deliverability and Spam Protection States
-  const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">(() => (localStorage.getItem("bulk_html_layout") as "pristine" | "simple" | "raw") || "pristine");
-  const [useAutoUnsubscribe, setUseAutoUnsubscribe] = useState(() => localStorage.getItem("bulk_use_unsubscribe") !== "false"); // default true
-  const [useAntiSpamFootprint, setUseAntiSpamFootprint] = useState(() => localStorage.getItem("bulk_use_footprint") !== "false"); // default true
+  const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">(() => (localStorage.getItem("bulk_html_layout") as "pristine" | "simple" | "raw") || "raw"); // Default to raw (plain text) for direct high inbox-delivery TXT
+  const [useAutoUnsubscribe, setUseAutoUnsubscribe] = useState(() => localStorage.getItem("bulk_use_unsubscribe") === "true"); // default false to avoid auto extra lines
+  const [useAntiSpamFootprint, setUseAntiSpamFootprint] = useState(() => localStorage.getItem("bulk_use_footprint") === "true"); // default false to avoid auto extra lines
   const [useZeroWidthPadding, setUseZeroWidthPadding] = useState(() => localStorage.getItem("bulk_use_zero_width") !== "false"); // default true
   const [useSubjectVariant, setUseSubjectVariant] = useState(() => localStorage.getItem("bulk_use_subj_variant") !== "false"); // default true
   const [neutralizeSpamWords, setNeutralizeSpamWords] = useState(() => localStorage.getItem("bulk_neutralize_spam") !== "false"); // default true
@@ -357,6 +353,9 @@ export default function App() {
       }
     });
 
+    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|in|ca|au)\b/i;
+    const hasLink = linkRegex.test(subject) || linkRegex.test(body);
+
     const hasPersonalizationInSubject = subject.includes("{name}") || subject.includes("{email}");
     const hasPersonalizationInBody = body.includes("{name}") || body.includes("{email}");
     const hasUniqueId = body.includes("{random_id}");
@@ -367,6 +366,11 @@ export default function App() {
     if (wordsFound.length > 0) {
       score -= Math.min(wordsFound.length * 15, 45);
       issues.push(`Spam keywords detected: "${wordsFound.slice(0, 3).join(", ")}"`);
+    }
+
+    if (hasLink) {
+      score -= 60;
+      issues.push("⚠️ Links/URLs detected! (Mails containing links are blocked by search/anti-spam heuristics. Please remove all links and domains to landing directly in INBOX)");
     }
 
     if (!hasPersonalizationInSubject) {
@@ -397,7 +401,7 @@ export default function App() {
       level = "medium";
     }
 
-    return { score: finalScore, level, issues, wordsFound };
+    return { score: finalScore, level, issues, wordsFound, hasLink };
   };
 
   const getSpamKeywords = (text: string): string[] => {
@@ -414,6 +418,13 @@ export default function App() {
         found.push(word);
       }
     });
+
+    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|in|ca|au)\b/i;
+    const matches = text.match(linkRegex);
+    if (matches) {
+      found.push(`Link/URL: "${matches[0].slice(0, 20)}${matches[0].length > 20 ? "..." : ""}"`);
+    }
+
     return found;
   };
 
