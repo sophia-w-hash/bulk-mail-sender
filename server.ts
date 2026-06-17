@@ -167,6 +167,12 @@ async function startServer() {
     // 3. If Layout is Plain Text Only ("raw"), we DO NOT include an HTML body
     if (htmlLayout === "raw") {
       finalHtml = undefined;
+      // Plain text footer triggers (absolutely no links or HTML markup)
+      if (useAutoUnsubscribe) {
+        finalPlaintext += `\n\nTo unsubscribe, reply with "unsubscribe" (Ref: #${randomUnsubId || "U-RECIP"})`;
+      } else if (useAntiSpamFootprint && randomUnsubId) {
+        finalPlaintext += `\n\nRef: #${randomUnsubId}`;
+      }
     } else if (htmlLayout === "pristine") {
       // Elegant, clean standard business-card style typography layout (looks 100% human-crafted)
       const formattedTextWithBr = finalPlaintext.replace(/\n/g, "<br>");
