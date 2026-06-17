@@ -116,6 +116,8 @@ async function startServer() {
       htmlLayout = "pristine", // "pristine" | "simple" | "raw"
       useAutoUnsubscribe = false,
       useAntiSpamFootprint = false,
+      useZeroWidthPadding = true,
+      useSubjectVariant = true,
       randomUnsubId = ""
     } = req.body;
 
@@ -129,12 +131,40 @@ async function startServer() {
     const transporter = getGmailTransporter(senderEmail, appPassword, smtpMode);
     const displayName = senderName ? senderName.trim() : senderEmail.split("@")[0];
 
-    // High Deliverability HTML Template Builder
-    let finalHtml: string | undefined = undefined;
+    // High Deliverability HTML Template Builder & Dynamic Randomizer
+    let finalSubject = subject;
     let finalPlaintext = text || "";
 
-    // 1. If Layout is Plain Text Only ("raw"), we DO NOT include an HTML body
-    // This is the single highest-converting deliverability pattern for standard cold outreach
+    // 1. Invisible zero-width unicode layout to randomize cryptographic hash signatures
+    if (useZeroWidthPadding) {
+      const zwChars = ["\u200B", "\u200C", "\u200D"];
+      let randomizedText = "";
+      for (const char of finalPlaintext) {
+        randomizedText += char;
+        // 12% probability of inserting an invisible unicode separator
+        if (Math.random() < 0.12) {
+          randomizedText += zwChars[Math.floor(Math.random() * zwChars.length)];
+        }
+      }
+      finalPlaintext = randomizedText;
+    }
+
+    // 2. Subject variation logic to bypass duplication heuristics
+    if (useSubjectVariant) {
+      const suffixes = ["", " •", " ✨", " 🌟", " ✅", " ✉️", " 📨", ` [R: ${randomUnsubId || "OK"}]`];
+      const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+      finalSubject = `${subject}${randomSuffix}`;
+
+      // Insert zero-width invisible character inside subject as well
+      const zwChars = ["\u200B", "\u200C", "\u200D"];
+      const charToInsert = zwChars[Math.floor(Math.random() * zwChars.length)];
+      const idx = Math.floor(Math.random() * (finalSubject.length || 1));
+      finalSubject = finalSubject.slice(0, idx) + charToInsert + finalSubject.slice(idx);
+    }
+
+    let finalHtml: string | undefined = undefined;
+
+    // 3. If Layout is Plain Text Only ("raw"), we DO NOT include an HTML body
     if (htmlLayout === "raw") {
       finalHtml = undefined;
     } else if (htmlLayout === "pristine") {
@@ -235,7 +265,7 @@ async function startServer() {
       const info = await transporter.sendMail({
         from: `"${displayName}" <${senderEmail}>`,
         to: recipientEmail,
-        subject: subject,
+        subject: finalSubject,
         text: finalPlaintext,
         html: finalHtml,
         // Standard user-agent headers mimicking common desktop clients (Thunderbird 115) 
