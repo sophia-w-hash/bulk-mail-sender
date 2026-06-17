@@ -4,15 +4,11 @@ import {
   Send, 
   Play, 
   Pause, 
-  Square, 
   Eye, 
   EyeOff, 
-  HelpCircle, 
-  Clock, 
-  FileSpreadsheet, 
   ShieldCheck,
-  AlertCircle,
-  Users
+  Users,
+  FileSpreadsheet
 } from "lucide-react";
 
 interface Client {
@@ -31,56 +27,6 @@ interface LogEntry {
   error?: string;
 }
 
-// Helper to retrieve and clean active limits map
-const getGmailLimitsMap = (): Record<string, number[]> => {
-  const rawLimits = localStorage.getItem("bulk_sender_limits");
-  if (!rawLimits) return {};
-  try {
-    return JSON.parse(rawLimits);
-  } catch (e) {
-    return {};
-  }
-};
-
-// Check Gmail account limits: 27 emails within 2 rolling hours
-const checkGmailLimit = (email: string): { allowed: boolean; count: number; nextResetTimeMs: number } => {
-  if (!email) return { allowed: true, count: 0, nextResetTimeMs: 0 };
-  const now = Date.now();
-  const limitWindowMs = 2 * 60 * 60 * 1000; // 2 hours
-  const limitsMap = getGmailLimitsMap();
-  const key = email.toLowerCase().trim();
-  
-  const list = limitsMap[key] || [];
-  // Filter only timestamps in the last 2 hours
-  const activeSends = list.filter(ts => (now - ts) < limitWindowMs);
-  
-  // Save updated map to local storage
-  limitsMap[key] = activeSends;
-  localStorage.setItem("bulk_sender_limits", JSON.stringify(limitsMap));
-  
-  const count = activeSends.length;
-  const allowed = count < 27;
-  
-  // Calculate oldest timestamp in the active list to determine when the next reset slot opens
-  const oldestTs = activeSends.length > 0 ? Math.min(...activeSends) : 0;
-  const nextResetTimeMs = oldestTs > 0 ? oldestTs + limitWindowMs : 0;
-  
-  return { allowed, count, nextResetTimeMs };
-};
-
-// Record a successful email dispatch
-const recordGmailSend = (email: string) => {
-  if (!email) return;
-  const now = Date.now();
-  const limitsMap = getGmailLimitsMap();
-  const key = email.toLowerCase().trim();
-  
-  if (!limitsMap[key]) limitsMap[key] = [];
-  limitsMap[key].push(now);
-  
-  localStorage.setItem("bulk_sender_limits", JSON.stringify(limitsMap));
-};
-
 export default function App() {
   // Launcher passcode lock states (Passcode to unlock is 6395)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -89,24 +35,18 @@ export default function App() {
   const [passcodeInput, setPasscodeInput] = useState("");
   const [passcodeError, setPasscodeError] = useState("");
 
-  // SMTP Credentials (starting completely blank on first load as requested)
+  // SMTP Credentials
   const [senderName, setSenderName] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
   const [appPassword, setAppPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // Email Subject and Body templates (starting completely blank on load as requested)
+  // Email Subject and Body templates
   const [subjectTemplate, setSubjectTemplate] = useState("");
   const [bodyTemplate, setBodyTemplate] = useState("");
 
-  // Recipients input (starting completely blank on load)
+  // Recipients input
   const [rawRecipients, setRawRecipients] = useState("");
-  
-  // Send mode batch size (1-1 or 2-2 as requested, default to 2 as secure layout choice)
-  const [batchSize, setBatchSize] = useState(() => {
-    const saved = localStorage.getItem("bulk_batch_size");
-    return saved ? Number(saved) : 2;
-  });
 
   // Turnstile simulated success state (starts loading, resolves to Success after mount)
   const [turnstileState, setTurnstileState] = useState<"loading" | "success">("loading");
@@ -115,17 +55,21 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
-  const [showHelpModal, setShowHelpModal] = useState(false);
 
-  // Static delay interval per batch (set to 1.5s as high-performance yet safe speed default)
-  const sendDelay = 1.5;
+  // Delay interval per email (adjustable by user, defaults to 5.0 seconds for high inboxing probability)
+  const [sendDelay, setSendDelay] = useState<number>(5.0);
+  const sendDelayRef = useRef<number>(5.0);
+
+  useEffect(() => {
+    sendDelayRef.current = sendDelay;
+  }, [sendDelay]);
 
   // Reference hooks for the send queue loop
   const isSendingRef = useRef<boolean>(false);
   const sendingStateRef = useRef<"idle" | "sending" | "paused">("idle");
   const activeTimersRef = useRef<Set<any>>(new Set());
 
-  // Safe Cloudflare Turnstile simulation on load
+  // Cloudflare Turnstile simulation on load
   useEffect(() => {
     const timer = setTimeout(() => {
       setTurnstileState("success");
@@ -133,18 +77,13 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Sync batchSize setting
-  useEffect(() => {
-    localStorage.setItem("bulk_batch_size", String(batchSize));
-  }, [batchSize]);
-
   // Synchronize state values
   useEffect(() => {
     sendingStateRef.current = sendingState;
     isSendingRef.current = sendingState === "sending";
   }, [sendingState]);
 
-  // Parse list of recipients pasted into textarea (pasted values are comma or newline separated)
+  // Parse list of recipients pasted into textarea
   const parsedRecipients = useMemo((): Client[] => {
     if (!rawRecipients.trim()) return [];
     
@@ -194,57 +133,6 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  // Helper patterns to search for known spam triggers in templates
-  const SPAM_TRIGGER_WORDS = [
-    "free", "earn money", "make money", "winner", "cash", "millions", "lottery",
-    "guaranteed", "100% free", "click here", "income", "usd", "gift card", "work from home",
-    "investment", "get paid", "crypto", "bitcoin", "loan", "viagra", "casino", "jackpot"
-  ];
-
-  // Memoized lists of matching spam words for real-time visualization highlight
-  const subjectSpamWords = useMemo(() => {
-    const found: string[] = [];
-    const lower = subjectTemplate.toLowerCase();
-    SPAM_TRIGGER_WORDS.forEach(word => {
-      if (new RegExp(`\\b${word}\\b`, 'i').test(lower)) {
-        found.push(word);
-      }
-    });
-    return found;
-  }, [subjectTemplate]);
-
-  const bodySpamWords = useMemo(() => {
-    const found: string[] = [];
-    const lower = bodyTemplate.toLowerCase();
-    SPAM_TRIGGER_WORDS.forEach(word => {
-      if (new RegExp(`\\b${word}\\b`, 'i').test(lower)) {
-        found.push(word);
-      }
-    });
-    return found;
-  }, [bodyTemplate]);
-
-  // Is there any URL or domain in subject/body (TXT mails shouldn't have spam links/domains)
-  const subjectHasLink = useMemo(() => {
-    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/i;
-    return linkRegex.test(subjectTemplate);
-  }, [subjectTemplate]);
-
-  const bodyHasLink = useMemo(() => {
-    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/i;
-    return linkRegex.test(bodyTemplate);
-  }, [bodyTemplate]);
-
-  // Auto clean utility for links
-  const handleRemoveLinks = (target: "subject" | "body") => {
-    const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|net|in|biz|info|cc|co|xyz|me|gov|edu|us|uk|ca|au)\b/gi;
-    if (target === "subject") {
-      setSubjectTemplate(prev => prev.replace(linkRegex, "").trim());
-    } else {
-      setBodyTemplate(prev => prev.replace(linkRegex, "").trim());
-    }
-  };
-
   // Spintax Choice Parser (e.g. "{Dear|Hello|Hi}")
   const parseSpintax = (str: string): string => {
     let output = str;
@@ -260,20 +148,12 @@ export default function App() {
     return output;
   };
 
-  // Perfect dynamic personalization rendering
+  // Personalization rendering
   const renderTemplateFull = (template: string, clientName: string, clientEmail: string): string => {
     let result = parseSpintax(template);
-    const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const todayStr = new Date().toLocaleDateString('en-GB'); 
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false });
-    
     result = result
       .replace(/{name}/g, clientName)
-      .replace(/{email}/g, clientEmail)
-      .replace(/{random_id}/g, randomHex)
-      .replace(/{date}/g, todayStr)
-      .replace(/{time}/g, timeStr);
-      
+      .replace(/{email}/g, clientEmail);
     return result;
   };
 
@@ -301,11 +181,6 @@ export default function App() {
       return;
     }
 
-    if (subjectHasLink || bodyHasLink) {
-      alert("❌ Links detected in templates! Plain Text (TXT) emails should not have any links for inbox delivery.");
-      return;
-    }
-
     let startIndex = currentIndex;
     if (currentIndex >= parsedRecipients.length) {
       startIndex = 0;
@@ -321,15 +196,6 @@ export default function App() {
     let nextIndexToProcess = startIndex;
 
     const processSingleItem = async (indexToProcess: number): Promise<boolean> => {
-      // Check limits
-      const limitStatus = checkGmailLimit(senderEmail);
-      if (!limitStatus.allowed) {
-        setSendingState("idle");
-        isSendingRef.current = false;
-        alert(`Hourly rate limit exceeded. Please wait before sending more.`);
-        return false;
-      }
-
       const currentClient = parsedRecipients[indexToProcess];
 
       setLogs((prev) => 
@@ -340,7 +206,7 @@ export default function App() {
 
       // Render templates
       const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
-      let customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
+      const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
 
       try {
         const response = await fetch("/api/send-mail", {
@@ -354,19 +220,18 @@ export default function App() {
             subject: customSubject,
             text: customBody,
             smtpMode: "auto",
-            htmlLayout: "raw", // Locked strictly to RAW TXT for safe inbox delivery
+            htmlLayout: "raw", // Pure Text for safe inbox delivery
             useAutoUnsubscribe: false,
             useAntiSpamFootprint: false,
             useZeroWidthPadding: false,
             useSubjectVariant: false,
-            randomUnsubId: Math.random().toString(36).substring(2, 8).toUpperCase()
+            randomUnsubId: ""
           }),
         });
 
         const data = await response.json();
 
         if (data.success) {
-          recordGmailSend(senderEmail);
           setLogs((prev) => 
             prev.map((log, idx) => 
               idx === indexToProcess 
@@ -382,8 +247,6 @@ export default function App() {
           );
           return true;
         } else {
-          setSendingState("idle");
-          isSendingRef.current = false;
           setLogs((prev) => 
             prev.map((log, idx) => 
               idx === indexToProcess 
@@ -392,17 +255,14 @@ export default function App() {
                     status: "failed", 
                     subject: customSubject,
                     timestamp: new Date().toLocaleTimeString(),
-                    error: data.error || "Rejected by Gmail SMTP server." 
+                    error: data.error || "Rejected by Gmail server." 
                   } 
                 : log
             )
           );
-          alert(`SMTP Error: ${data.error || "Rejected by Google SMTP."}`);
           return false;
         }
       } catch (err: any) {
-        setSendingState("idle");
-        isSendingRef.current = false;
         setLogs((prev) => 
           prev.map((log, idx) => 
             idx === indexToProcess 
@@ -416,49 +276,34 @@ export default function App() {
               : log
           )
         );
-        alert(`Dispatch failed: ${err.message || "Network Timeout."}`);
         return false;
       }
     };
 
-    const runBatchDispatch = async () => {
+    const runDispatchLoop = async () => {
       while (isSendingRef.current && nextIndexToProcess < parsedRecipients.length) {
-        const currentBatch: number[] = [];
-        for (let i = 0; i < batchSize && (nextIndexToProcess + i) < parsedRecipients.length; i++) {
-          currentBatch.push(nextIndexToProcess + i);
-        }
-
-        // Trigger dispatch promises
-        const batchPromises = currentBatch.map((index) => processSingleItem(index));
-        nextIndexToProcess += currentBatch.length;
+        const indexToProcess = nextIndexToProcess;
+        nextIndexToProcess += 1;
         setCurrentIndex(nextIndexToProcess);
 
-        const results = await Promise.all(batchPromises);
-        const allOk = results.every((ok) => ok === true);
-        if (!allOk || !isSendingRef.current) {
-          break;
-        }
-
-        // Delay between batch iterations
+        const success = await processSingleItem(indexToProcess);
+        
         if (nextIndexToProcess < parsedRecipients.length && isSendingRef.current) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(() => {
               activeTimersRef.current.delete(timer);
               resolve();
-            }, sendDelay * 1000);
+            }, sendDelayRef.current * 1000);
             activeTimersRef.current.add(timer);
           });
         }
       }
 
       setSendingState("idle");
-      if (nextIndexToProcess >= parsedRecipients.length && isSendingRef.current) {
-        alert("🎉 Done! All bulk emails processed successfully.");
-      }
       isSendingRef.current = false;
     };
 
-    runBatchDispatch();
+    runDispatchLoop();
   };
 
   const handlePauseSending = () => {
@@ -474,12 +319,11 @@ export default function App() {
     setLogs([]);
   };
 
-  // Reactive counters for Progress Monitor
+  // Counters for Progress Monitor
   const totalRecipients = parsedRecipients.length;
   const sentCount = useMemo(() => logs.filter(l => l.status === "success").length, [logs]);
   const failedCount = useMemo(() => logs.filter(l => l.status === "failed").length, [logs]);
   const remainingCount = useMemo(() => {
-    // If we haven't started sending, show total as remaining
     if (logs.length === 0) return totalRecipients;
     const processed = logs.filter(l => l.status === "success" || l.status === "failed").length;
     return Math.max(0, totalRecipients - processed);
@@ -487,7 +331,7 @@ export default function App() {
 
   const sendingPercent = totalRecipients > 0 ? Math.round((currentIndex / totalRecipients) * 100) : 0;
 
-  // Render Passcode gate if not authenticated
+  // Render Passcode gates if not authenticated
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#0f172a] text-slate-100 flex flex-col justify-center items-center px-4">
@@ -550,57 +394,50 @@ export default function App() {
     );
   }
 
-  // Check body highlight status
-  const bodyHasSpamDanger = bodySpamWords.length > 0 || bodyHasLink || subjectSpamWords.length > 0;
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased pb-12">
-      {/* Sleek Navigation Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-sm">
-              <Mail className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">Secure Mail Co</h1>
-              <p className="text-xs text-slate-500 font-medium">Outbound Client SMTP Panel</p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowHelpModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold transition cursor-pointer"
-            >
-              <HelpCircle className="h-4 w-4" />
-              <span>Gmail Setup Guide</span>
-            </button>
-            <div className="text-xs bg-slate-100 px-3 py-1.5 rounded-md font-mono text-slate-600">
-              Host: secure-run-direct
-            </div>
-          </div>
+      {/* Top Brand Header */}
+      <div className="flex flex-col items-center justify-center pt-8 pb-3">
+        <div className="flex items-center space-x-2 text-indigo-600 font-bold text-2xl tracking-wide select-none">
+          <ShieldCheck className="h-7 w-7" />
+          <span>Secure Mail Console</span>
         </div>
-      </header>
+      </div>
 
       {/* Main Two-Column Layout Workspace */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
+      <main className="max-w-5xl mx-auto px-4 mt-4">
+        
+        {/* Bulk Email Sender Heading */}
+        <div className="flex items-center space-x-2 mb-4">
+          <Send className="h-5 w-5 text-indigo-600" />
+          <h2 className="text-xl font-bold text-slate-800">Bulk Email Sender</h2>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* LEFT COLUMN: Compose Message */}
           <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 space-y-5">
-            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Mail className="h-5 w-5 text-indigo-600" />
-                <h2 className="font-bold text-slate-800 text-lg">Compose Message</h2>
-              </div>
+            <div className="border-b border-slate-100 pb-3 flex items-center space-x-2">
+              <Mail className="h-5 w-5 text-indigo-600" />
+              <h2 className="font-bold text-slate-800 text-base">Compose Message</h2>
             </div>
 
             <div className="space-y-4">
-              {/* Row 1: Your Gmail & App Password */}
+              {/* Row 1: Sender Name & Your Gmail */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-700">Your Gmail</label>
+                  <label className="block text-xs font-bold text-slate-700 font-sans">Sender Name</label>
+                  <input
+                    type="text"
+                    className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-800"
+                    placeholder="E.g., John Doe"
+                    value={senderName}
+                    onChange={(e) => setSenderName(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 font-sans">Your Gmail</label>
                   <input
                     type="email"
                     className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-800"
@@ -609,9 +446,23 @@ export default function App() {
                     onChange={(e) => setSenderEmail(e.target.value)}
                   />
                 </div>
+              </div>
+
+              {/* Row 2: Email Subject & App Password */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 font-sans">Email Subject</label>
+                  <input
+                    type="text"
+                    className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-800"
+                    placeholder="Enter subject line..."
+                    value={subjectTemplate}
+                    onChange={(e) => setSubjectTemplate(e.target.value)}
+                  />
+                </div>
 
                 <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-700">App Password</label>
+                  <label className="block text-xs font-bold text-slate-700 font-sans">App Password</label>
                   <div className="relative">
                     <input
                       type={showPassword ? "text" : "password"}
@@ -631,78 +482,22 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Row 2: Sender Name & Email Subject */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-700">Sender Name</label>
-                  <input
-                    type="text"
-                    className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-800"
-                    placeholder="E.g., John Doe"
-                    value={senderName}
-                    onChange={(e) => setSenderName(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-700">Email Subject</label>
-                  <input
-                    type="text"
-                    className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-800"
-                    placeholder="Enter subject line..."
-                    value={subjectTemplate}
-                    onChange={(e) => setSubjectTemplate(e.target.value)}
-                  />
-                </div>
-              </div>
-
               {/* Message Body (Plain Text) */}
               <div className="space-y-1">
-                <div className="flex justify-between items-center">
-                  <label className="block text-xs font-bold text-slate-700">Message Body (Plain Text)</label>
-                  {bodyHasSpamDanger && (
-                    <span className="text-[10px] text-red-600 font-extrabold flex items-center space-x-1 animate-pulse">
-                      <span>⚠️ Spam/Link Alert! (स्पैम चेतावनी)</span>
-                    </span>
-                  )}
-                </div>
+                <label className="block text-xs font-bold text-slate-700">Message Body (Plain Text)</label>
                 <textarea
                   rows={8}
-                  className={`w-full text-sm rounded-lg p-3 focus:outline-none transition-all duration-300 leading-relaxed font-sans resize-y ${
-                    bodyHasSpamDanger
-                      ? "border-2 border-red-500 bg-red-100 text-red-950 font-medium"
-                      : "bg-slate-50 border border-slate-200 text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-white"
-                  }`}
+                  className="w-full text-sm rounded-lg p-3 focus:outline-none transition-all duration-300 leading-relaxed font-sans resize-y bg-slate-50 border border-slate-200 text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-white"
                   placeholder="Write your email here..."
                   value={bodyTemplate}
                   onChange={(e) => setBodyTemplate(e.target.value)}
                 />
-
-                {/* Direct warning notification if text is red inside body */}
-                {bodySpamWords.length > 0 && (
-                  <p className="text-[10.5px] text-red-700 font-extrabold bg-red-50 border border-red-200 rounded p-2 mt-1 leading-tight">
-                    ⚠️ Avoid Spam words: <span className="underline">{bodySpamWords.join(", ")}</span> (स्पैम फोल्डर से बचने के लिए एंटी-स्पैम फ़िल्टर्स इस्तेमाल करें)
-                  </p>
-                )}
-
-                {bodyHasLink && (
-                  <div className="text-[10.5px] text-red-700 font-extrabold bg-red-50 border border-red-200 rounded p-2 mt-1.5 flex items-center justify-between">
-                    <span>🚨 Link found! Plain Text (TXT) should not have links for inbox landing.</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveLinks("body")}
-                      className="bg-red-700 text-white rounded px-2.5 py-1 text-[10px] font-bold shadow-xs hover:bg-red-800 transition shrink-0 cursor-pointer"
-                    >
-                      🧹 Clean
-                    </button>
-                  </div>
-                )}
               </div>
 
-              {/* Spam Protection Turnstile Replication Section */}
+              {/* Spam Protection Turnstile Layout */}
               <div className="pt-2 border-t border-slate-100 space-y-2">
-                <div className="flex items-center space-x-1 text-slate-700">
-                  <ShieldCheck className="h-4 w-4 text-indigo-600" />
+                <div className="flex items-center space-x-1 text-slate-500">
+                  <ShieldCheck className="h-4 w-4" />
                   <span className="text-xs font-bold">Spam Protection</span>
                 </div>
 
@@ -715,12 +510,12 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <div className="h-5 w-5 bg-[#0fa370] text-white rounded-full flex items-center justify-center shadow-xs">
+                        <div className="h-5 w-5 bg-[#0fa370] text-white rounded-full flex items-center justify-center">
                           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3.5}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                         </div>
-                        <span className="text-xs font-extrabold text-slate-800">Success!</span>
+                        <span className="text-xs font-extrabold text-[#111]">Success!</span>
                       </>
                     )}
                   </div>
@@ -735,7 +530,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="border border-red-300 bg-red-50 text-red-700 rounded p-1 px-2.5 text-[10px] font-semibold tracking-tight w-full max-w-sm leading-none block text-left">
+                <div className="border border-red-300 bg-red-50 text-red-700 rounded p-1 px-2 text-[10px] font-semibold tracking-tight w-full max-w-sm leading-none block text-left">
                   For testing only. If seen, report to site owner
                 </div>
               </div>
@@ -777,7 +572,7 @@ export default function App() {
                 <textarea
                   rows={4}
                   className="w-full text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg p-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white leading-relaxed"
-                  placeholder="john@example.com&#10;jane@example.com"
+                  placeholder={`john@example.com\njane@example.com`}
                   value={rawRecipients}
                   onChange={(e) => setRawRecipients(e.target.value)}
                 />
@@ -814,6 +609,30 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Sending Speed/Delay Control */}
+              <div className="space-y-1.5 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-700">Sending Delay (सेंडिंग डिले)</span>
+                  <span className="font-mono text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded">
+                    {sendDelay}s / email
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="20"
+                  step="0.5"
+                  className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  value={sendDelay}
+                  onChange={(e) => setSendDelay(parseFloat(e.target.value))}
+                />
+                <div className="flex justify-between text-[11px] text-slate-400 font-semibold leading-none">
+                  <span>0.5s (Fast)</span>
+                  <span className="text-emerald-600 font-bold">5s - 10s (Inbox Safe ⭐)</span>
+                  <span>20s (Very Safe)</span>
+                </div>
+              </div>
+
               {/* Progress Line */}
               <div className="space-y-1.5">
                 <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
@@ -824,104 +643,86 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Symmetrical Send Mode Panel (no extra advanced controls) */}
-              <div className="pt-3 border-t border-slate-100 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700">Send Mode (एक साथ ईमेल सेंडिंग):</span>
-                  <div className="flex items-center space-x-1 text-[10px] text-indigo-600 font-extrabold">
-                    <Clock className="h-3 w-3" />
-                    <span>Speed Configured: {sendDelay}s</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setBatchSize(1)}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${
-                      batchSize === 1
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span>1-1 (1 by 1)</span>
-                    <span className="text-[9px] opacity-80 font-normal">Super Safe • Minimal spam</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBatchSize(2)}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center flex flex-col items-center justify-center cursor-pointer ${
-                      batchSize === 2
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span>2-2 (2 by 2)</span>
-                    <span className="text-[9px] opacity-80 font-normal">Balanced safe speed</span>
-                  </button>
+              {/* Status Indicator */}
+              <div className="flex justify-center items-center py-2 bg-slate-50 rounded-lg border border-slate-100">
+                <div className="flex items-center space-x-2 text-xs font-bold text-slate-600">
+                  <span className="relative flex h-2 w-2">
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      sendingState === "sending" ? "bg-emerald-400" : "bg-slate-400"
+                    }`} />
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                      sendingState === "sending" ? "bg-emerald-500" : "bg-slate-500"
+                    }`} />
+                  </span>
+                  <span>
+                    {sendingState === "sending" ? `🚀 Sending... (${currentIndex}/${totalRecipients})` :
+                     sendingState === "paused" ? "⏸️ Sending Paused" : "⏸️ Ready to send"}
+                  </span>
                 </div>
               </div>
 
-              {/* Dynamic Status / Actions Block */}
-              <div className="pt-2 flex flex-col space-y-3">
-                <div className="flex justify-center items-center py-2 bg-slate-50/50 rounded-lg border border-slate-100/80">
-                  <div className="flex items-center space-x-2 text-xs font-bold text-slate-600">
-                    <span className="relative flex h-2 w-2">
-                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                        sendingState === "sending" ? "bg-emerald-400" : "bg-slate-400"
-                      }`} />
-                      <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                        sendingState === "sending" ? "bg-emerald-500" : "bg-slate-500"
-                      }`} />
-                    </span>
-                    <span>
-                      {sendingState === "sending" ? `🚀 Sending... (${currentIndex}/${totalRecipients})` :
-                       sendingState === "paused" ? "⏸️ Sending Paused" : "⏸️ Ready to send"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Primary CTA Submit Trigger */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={sendingState === "sending" ? handlePauseSending : startSendingQueue}
-                    disabled={totalRecipients === 0}
-                    className={`w-full py-3.5 rounded-xl font-bold text-sm text-white transition flex items-center justify-center space-x-2 cursor-pointer shadow-xs ${
-                      totalRecipients === 0 
-                      ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                      : sendingState === "sending"
-                        ? "bg-amber-500 hover:bg-amber-600"
-                        : "bg-[#0eae74] hover:bg-[#0c9664]"
-                    }`}
-                  >
-                    {sendingState === "sending" ? (
-                      <>
-                        <Pause className="h-4 w-4" />
-                        <span>Pause Campaign</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4" />
-                        <span>Send All</span>
-                      </>
-                    )}
-                  </button>
-
-                  {(currentIndex > 0 || logs.length > 0) && (
-                    <button
-                      onClick={handleResetQueue}
-                      className="px-4.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-sm rounded-xl transition cursor-pointer"
-                      title="Reset send statistics and index"
-                    >
-                      Reset
-                    </button>
+              {/* Primary Actions Button */}
+              <div className="flex gap-2">
+                <button
+                  onClick={sendingState === "sending" ? handlePauseSending : startSendingQueue}
+                  disabled={totalRecipients === 0}
+                  className={`w-full py-3.5 rounded-xl font-bold text-sm text-white transition flex items-center justify-center space-x-2 cursor-pointer shadow-xs ${
+                    totalRecipients === 0 
+                    ? "bg-slate-350 text-slate-500 cursor-not-allowed"
+                     : sendingState === "sending"
+                      ? "bg-amber-500 hover:bg-amber-600"
+                      : "bg-[#0eae74] hover:bg-[#0c9664]"
+                  }`}
+                >
+                  {sendingState === "sending" ? (
+                    <>
+                      <Pause className="h-4 w-4" />
+                      <span>Pause Campaign</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4" />
+                      <span>Send All</span>
+                    </>
                   )}
-                </div>
+                </button>
+
+                {(currentIndex > 0 || logs.length > 0) && (
+                  <button
+                    onClick={handleResetQueue}
+                    className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-sm rounded-xl transition cursor-pointer"
+                    title="Reset Statistics"
+                  >
+                    Reset
+                  </button>
+                )}
               </div>
 
             </div>
 
-            {/* Collapsible / Optional logs list (hidden by default, allows tracking failure error messages) */}
+            {/* 🛡️ Inbox Placement Helper Tips */}
+            <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 space-y-2 text-xs text-emerald-900 shadow-3xs mt-2">
+              <div className="flex items-center space-x-1.5 font-extrabold text-emerald-950 border-b border-emerald-200/50 pb-2">
+                <ShieldCheck className="h-4.5 w-4.5 text-emerald-600 flex-shrink-0" />
+                <span>100% Inbox Delivery Guidance (सैम रोकने के टिप्स)</span>
+              </div>
+              <ul className="list-disc pl-4 space-y-2 text-[11px] leading-relaxed text-emerald-900 font-medium">
+                <li>
+                  <strong className="text-emerald-950">Spintax (स्पिनटैक्स रैंडम):</strong> Use templates like <code className="bg-white px-1 py-0.5 rounded text-emerald-950 font-mono font-bold">{"{Hello|Hi|Dear}"}</code> in your Subject or Body. This automatically alternates greetings so every single email is unique and bypasses Gmail’s spam filters.
+                </li>
+                <li>
+                  <strong className="text-emerald-950">No Links (कोई लिंक न जोड़ें):</strong> As requested, do not add links or buttons to the subject or body to avoid triggering security hash blocks.
+                </li>
+                <li>
+                  <strong className="text-emerald-950">Slow Sending Delay (धीमी सेंडिंग प्रक्रिया):</strong> Increase the <strong className="text-emerald-950">Sending Delay to 5s - 10s</strong>. Sending emails too fast (e.g. 0.5s) will make Gmail trigger an automated anti-bot limit and mark the entire batch as spam immediately.
+                </li>
+                <li>
+                  <strong className="text-emerald-950">Personalize with tags:</strong> Add <code className="bg-white px-1 py-0.5 rounded text-emerald-950 font-mono font-bold">{"{name}"}</code> or <code className="bg-white px-1 py-0.5 rounded text-emerald-950 font-mono font-bold">{"{email}"}</code> to make the text specific to the user.
+                </li>
+              </ul>
+            </div>
+
+            {/* Clean, Non-obtrusive list with logs details */}
             {logs.length > 0 && (
               <details className="bg-white rounded-2xl border border-slate-200 p-4 transition duration-200">
                 <summary className="text-xs font-bold text-slate-600 cursor-pointer focus:outline-none select-none">
@@ -951,41 +752,6 @@ export default function App() {
 
         </div>
       </main>
-
-      {/* Simplified Help Setup modal popup */}
-      {showHelpModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <h3 className="text-base font-bold text-slate-900 flex items-center space-x-1.5">
-              <ShieldCheck className="h-5 w-5 text-indigo-600" />
-              <span>Google 16-Digit App Password Guide</span>
-            </h3>
-            
-            <div className="text-xs text-slate-600 space-y-2.5 leading-relaxed font-sans">
-              <p>आपका साधारण Gmail पासवर्ड सुरक्षा कारणों से सीधे SMTP के माध्यम से स्वीकृत नहीं होता है। सुरक्षित डेलिवरी के लिए इन चरणों का पालन करें:</p>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>अपने Google Account Settings में जाएँ।</li>
-                <li><strong>Security</strong> टैब पर क्लिक करें।</li>
-                <li><strong>2-Step Verification</strong> चालू (ON) करें।</li>
-                <li>सर्च बॉक्स में <strong>"App Passwords"</strong> सर्च करें।</li>
-                <li>ऐप का कुछ भी नाम दें (जैसे: <code>Mailer app</code>) और Generate करें।</li>
-                <li>आपको स्क्रीन पर <strong>16-अक्षरों का पासवर्ड</strong> (उदा: <code>abcd efgh ijkl mnop</code>) मिलेगा।</li>
-                <li>उसे कॉपी करके यहाँ "App Password" फ़ील्ड में पेस्ट करें।</li>
-              </ol>
-              <div className="bg-slate-50 p-2.5 rounded border border-slate-100 text-[10.5px]">
-                💡 <strong>टिप:</strong> ईमेल सब्जेक्ट या मैसेज में <code>{`{random_id}`}</code> टैग का प्रयोग करें ताकि प्रत्येक व्यक्ति का ईमेल यूनिक हो, जिससे एंटी-स्पैम फ़िल्टर्स आपके मेल्स सीधे इनबॉक्स में भेजेंगे।
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowHelpModal(false)}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-sm transition cursor-pointer"
-            >
-              Close Guide
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
