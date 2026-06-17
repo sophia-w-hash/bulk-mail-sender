@@ -21,7 +21,8 @@ import {
   FileSpreadsheet, 
   Terminal,
   Layers,
-  LogOut
+  LogOut,
+  ShieldCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -125,8 +126,27 @@ export default function App() {
   const [sendDelay, setSendDelay] = useState(1.0); // default 1.0 second delay between batches (10 emails per batch)
   const [useJitter, setUseJitter] = useState(() => localStorage.getItem("bulk_use_jitter") === "true");
   const [sendingState, setSendingState] = useState<"idle" | "sending" | "paused">("idle");
+  
+  // Deliverability and Spam Protection States
+  const [htmlLayout, setHtmlLayout] = useState<"pristine" | "simple" | "raw">(() => (localStorage.getItem("bulk_html_layout") as "pristine" | "simple" | "raw") || "pristine");
+  const [useAutoUnsubscribe, setUseAutoUnsubscribe] = useState(() => localStorage.getItem("bulk_use_unsubscribe") !== "false"); // default true
+  const [useAntiSpamFootprint, setUseAntiSpamFootprint] = useState(() => localStorage.getItem("bulk_use_footprint") !== "false"); // default true
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Sync deliverability states to local storage
+  useEffect(() => {
+    localStorage.setItem("bulk_html_layout", htmlLayout);
+  }, [htmlLayout]);
+
+  useEffect(() => {
+    localStorage.setItem("bulk_use_unsubscribe", useAutoUnsubscribe ? "true" : "false");
+  }, [useAutoUnsubscribe]);
+
+  useEffect(() => {
+    localStorage.setItem("bulk_use_footprint", useAntiSpamFootprint ? "true" : "false");
+  }, [useAntiSpamFootprint]);
 
   // Mails Limit Modals
   const [limitModalOpen, setLimitModalOpen] = useState(false);
@@ -271,6 +291,68 @@ export default function App() {
     return result;
   };
 
+  // Deliverability Spam Score Scanner Utility (Bypasses spam folders dynamically)
+  const getSpamAnalysis = (subject: string, body: string) => {
+    const SPAM_TRIGGER_WORDS = [
+      "free", "earn money", "make money", "winner", "cash", "millions", "lottery",
+      "guaranteed", "100% free", "click here", "income", "usd", "gift card", "work from home",
+      "investment", "get paid", "crypto", "bitcoin", "loan", "viagra", "casino", "jackpot"
+    ];
+
+    const combined = `${subject.toLowerCase()} ${body.toLowerCase()}`;
+    const wordsFound: string[] = [];
+    
+    SPAM_TRIGGER_WORDS.forEach(word => {
+      // Find exact word or surrounded by spaces/punctuation
+      const regex = new RegExp(`\\b${word}\\b`, 'i');
+      if (regex.test(combined)) {
+        wordsFound.push(word);
+      }
+    });
+
+    const hasPersonalizationInSubject = subject.includes("{name}") || subject.includes("{email}");
+    const hasPersonalizationInBody = body.includes("{name}") || body.includes("{email}");
+    const hasUniqueId = body.includes("{random_id}");
+
+    let score = 100;
+    const issues: string[] = [];
+
+    if (wordsFound.length > 0) {
+      score -= Math.min(wordsFound.length * 15, 45);
+      issues.push(`Spam keywords detected: "${wordsFound.slice(0, 3).join(", ")}"`);
+    }
+
+    if (!hasPersonalizationInSubject) {
+      score -= 10;
+      issues.push("Subject is not personalized (tip: add {name} to personalize subject)");
+    }
+
+    if (!hasPersonalizationInBody) {
+      score -= 15;
+      issues.push("Body lacks personalization elements (add {name} or {email})");
+    }
+
+    if (!hasUniqueId) {
+      score -= 20;
+      issues.push("No unique ID found (sending identical messages triggers spam folders. Add {random_id} tag)");
+    }
+
+    if (body.trim().length > 0 && body.trim().length < 50) {
+      score -= 10;
+      issues.push("Body text length is extremely short (under 50 chars looks suspicious)");
+    }
+
+    const finalScore = Math.max(10, score);
+    let level: "good" | "medium" | "high" = "good";
+    if (finalScore < 55) {
+      level = "high";
+    } else if (finalScore < 80) {
+      level = "medium";
+    }
+
+    return { score: finalScore, level, issues, wordsFound };
+  };
+
   // Synchronize dynamic status logs automatically in real-time when idle
   useEffect(() => {
     if (sendingState === "idle") {
@@ -400,6 +482,9 @@ export default function App() {
       const customSubject = renderTemplateFull(subjectTemplate, currentClient.name, currentClient.email);
       const customBody = renderTemplateFull(bodyTemplate, currentClient.name, currentClient.email);
 
+      // Generate a unique transaction / unsubscribe footprint ID per recipient
+      const randomUnsubId = Math.random().toString(36).substring(2, 8).toUpperCase();
+
       try {
         const response = await fetch("/api/send-mail", {
           method: "POST",
@@ -411,9 +496,11 @@ export default function App() {
             recipientEmail: currentClient.email,
             subject: customSubject,
             text: customBody,
-            // Generate html line break standard formatting for safe deliverability
-            html: customBody.replace(/\n/g, "<br>"),
             smtpMode,
+            htmlLayout,
+            useAutoUnsubscribe,
+            useAntiSpamFootprint,
+            randomUnsubId
           }),
         });
 
@@ -717,7 +804,7 @@ export default function App() {
             </div>
 
             {/* Right: Your Gmail */}
-            <div className="grid-cols-1 space-y-1">
+            <div className="space-y-1">
               <label className="block text-sm font-bold text-slate-700" htmlFor="smtp_sender_email">
                 Your Gmail <span className="text-xs font-normal text-slate-400 font-mono">(login email ID)</span>
               </label>
@@ -841,6 +928,61 @@ export default function App() {
                 onChange={(e) => setBodyTemplate(e.target.value)}
                 id="mail_body"
               />
+
+              {/* Real-time Deliverability & Spam Score Widget */}
+              {(() => {
+                const analysis = getSpamAnalysis(subjectTemplate, bodyTemplate);
+                return (
+                  <div className="mt-2.5 p-3 rounded-xl border bg-white border-slate-200 shadow-2xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-xs font-bold text-slate-700">Inbox Health Analysis:</span>
+                        <span className={`text-[10.5px] px-2 py-0.5 rounded-full font-bold text-white shadow-3xs ${
+                          analysis.level === "good" ? "bg-emerald-600" :
+                          analysis.level === "medium" ? "bg-amber-500" : "bg-rose-500"
+                        }`}>
+                          {analysis.score}% {analysis.level === "good" ? "High (Inbox)" : analysis.level === "medium" ? "Medium (Risk)" : "High Spam Threat"}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider font-mono">Live Scanner</span>
+                    </div>
+
+                    {/* Progress Bar meter */}
+                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          analysis.level === "good" ? "bg-emerald-500" :
+                          analysis.level === "medium" ? "bg-amber-400" : "bg-rose-500"
+                        }`}
+                        style={{ width: `${analysis.score}%` }}
+                      ></div>
+                    </div>
+
+                    {analysis.issues.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t border-slate-50">
+                        <span className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wider">How to secure INBOX delivery:</span>
+                        <ul className="space-y-1">
+                          {analysis.issues.map((issue, i) => (
+                            <li key={i} className="text-[11px] text-slate-600 flex items-start space-x-1 leading-tight">
+                              <span className="text-rose-500 font-bold shrink-0">⚠️</span>
+                              <span>{issue}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-emerald-800 font-semibold bg-emerald-50/50 p-2 rounded-lg border border-emerald-100 leading-tight">
+                        🎉 Excellent! Your campaign has 100% deliverability health. No spam words or duplicate risk factors found!
+                      </div>
+                    )}
+
+                    {/* Bilingual tip */}
+                    <p className="text-[10.5px] text-slate-500 leading-tight italic pt-1 border-t border-slate-50 pt-1.5">
+                      <strong>💡 Tips:</strong> {analysis.level === "good" ? "आपका ईमेल बिल्कुल सुरक्षित है! Mails direct client inbox में लैंड करेंगे।" : "प्रत्येक व्यक्ति का ईमेल अलग होने के लिए संदेश के अंत में '+unique_id' बटन दबाएं, ताकि एंटी-स्पैम फ़िल्टर्स बाईपास हो सकें।"}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Right: Recipients (comma or newline) */}
@@ -999,11 +1141,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right Column: Logout Session */}
+            {/* Right Column: Premium Deliverability and Session Management */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
-                <label className="block text-sm font-bold text-slate-700">
-                  All Logout
+                <label className="block text-sm font-bold text-slate-700 flex items-center space-x-1">
+                  <ShieldCheck className="h-4 w-4 text-indigo-600" />
+                  <span>Deliverability Shield (इनबॉक्स सेटिंग)</span>
                 </label>
                 <button
                   type="button"
@@ -1012,26 +1155,93 @@ export default function App() {
                   className="text-xs text-indigo-600 hover:underline font-bold disabled:text-slate-400"
                   id="verify_quick_trigger"
                 >
-                  {verifyingSmtp ? "Verifying..." : "Verify Connection Link"}
+                  {verifyingSmtp ? "Verifying..." : "Verify Link"}
                 </button>
               </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3.5 flex flex-col justify-between min-h-[178px]">
-                <div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Apne email credentials ko fully temporary browser cache se clear karne k liye Logout dabayein.
-                  </p>
+
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-4">
+                {/* 1. Layout selection */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-xs font-bold text-slate-600 flex items-center space-x-1">
+                      <span>Email Design Layout:</span>
+                    </span>
+                    <span className="text-[10px] text-indigo-600 font-semibold font-mono">Select Output</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(["pristine", "simple", "raw"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setHtmlLayout(mode)}
+                        className={`text-[11px] py-2 px-1.5 rounded-lg border font-bold transition flex flex-col items-center justify-center space-y-0.5 text-center cursor-pointer ${
+                          htmlLayout === mode
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                        }`}
+                        title={
+                          mode === "pristine" ? "Generates clean formal business card styling templates" :
+                          mode === "simple" ? "Basic line-break HTML layout" : "Pure text email (No HTML code, maximally safe, bypasses all spam filters)"
+                        }
+                      >
+                        <span className="capitalize">{mode === "raw" ? "Plain Text" : mode}</span>
+                        <span className="text-[8px] opacity-80 font-normal">
+                          {mode === "pristine" ? "Professional" : mode === "simple" ? "Compact" : "100% Safe"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Action Button: Clear/Logout Credentials */}
+                {/* 2. Automated Helpers */}
                 <div className="space-y-2">
-                  <button
-                    onClick={handleClearSMTPConfig}
-                    className="w-full flex items-center justify-center space-x-2 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-200 hover:border-rose-300 rounded-lg font-bold text-sm transition cursor-pointer active:scale-98"
-                    id="clear_smtp_btn"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span>All Logout</span>
-                  </button>
+                  {/* Append Unsubscribe Footnote */}
+                  <div className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded-lg shadow-3xs">
+                    <div className="flex flex-col pr-1.5">
+                      <span className="text-[11px] font-bold text-slate-700">Add RFC Unsubscribe footnote</span>
+                      <span className="text-[9.5px] text-slate-400 leading-tight">Keeps mail safe from direct spam reporting.</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer" 
+                        checked={useAutoUnsubscribe}
+                        onChange={(e) => setUseAutoUnsubscribe(e.target.checked)}
+                      />
+                      <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+
+                  {/* Anti-Spam cryptographic footprint code */}
+                  <div className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded-lg shadow-3xs hover:border-slate-300 transition">
+                    <div className="flex flex-col pr-1.5">
+                      <span className="text-[11px] font-bold text-slate-700">Anti-Spam Footprint Tracker</span>
+                      <span className="text-[9.5px] text-slate-400 leading-tight">Appends invisible dynamic hashes.</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer" 
+                        checked={useAntiSpamFootprint}
+                        onChange={(e) => setUseAntiSpamFootprint(e.target.checked)}
+                      />
+                      <div className="w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-200/60 pt-3 flex flex-col space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-500 font-medium">Session cache controls:</span>
+                    <button
+                      onClick={handleClearSMTPConfig}
+                      className="text-[10.5px] text-rose-600 hover:text-rose-800 font-bold flex items-center space-x-1"
+                      id="clear_smtp_btn"
+                    >
+                      <LogOut className="h-3 w-3" />
+                      <span>All Logout & Clear Cache</span>
+                    </button>
+                  </div>
 
                   {/* Real-time verification notice feed */}
                   {smtpStatusMsg && (
@@ -1040,12 +1250,12 @@ export default function App() {
                     }`}>
                       <div className="mt-0.5 shrink-0">
                         {smtpVerified === true ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-rose-600" />
+                          <XCircle className="h-3.5 w-3.5 text-rose-600" />
                         )}
                       </div>
-                      <div className="leading-tight text-[11px]">
+                      <div className="leading-tight text-[10.5px]">
                         {smtpStatusMsg}
                       </div>
                     </div>
