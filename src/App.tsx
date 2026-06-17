@@ -400,6 +400,26 @@ export default function App() {
     return { score: finalScore, level, issues, wordsFound };
   };
 
+  const getSpamKeywords = (text: string): string[] => {
+    const SPAM_TRIGGER_WORDS = [
+      "free", "earn money", "make money", "winner", "cash", "millions", "lottery",
+      "guaranteed", "100% free", "click here", "income", "usd", "gift card", "work from home",
+      "investment", "get paid", "crypto", "bitcoin", "loan", "viagra", "casino", "jackpot"
+    ];
+    const lower = text.toLowerCase();
+    const found: string[] = [];
+    SPAM_TRIGGER_WORDS.forEach(word => {
+      const regex = new RegExp(`\\b${word}\\b`, 'i');
+      if (regex.test(lower)) {
+        found.push(word);
+      }
+    });
+    return found;
+  };
+
+  const subjectSpamWords = useMemo(() => getSpamKeywords(subjectTemplate), [subjectTemplate]);
+  const bodySpamWords = useMemo(() => getSpamKeywords(bodyTemplate), [bodyTemplate]);
+
   // Synchronize dynamic status logs automatically in real-time when idle
   useEffect(() => {
     if (sendingState === "idle") {
@@ -904,17 +924,33 @@ export default function App() {
 
             {/* Right: Subject */}
             <div className="space-y-1">
-              <label className="block text-sm font-bold text-slate-700" htmlFor="mail_subject">
-                Subject <span className="text-xs font-normal text-slate-400 font-mono">({`{name}`} will parse name)</span>
-              </label>
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-bold text-slate-700" htmlFor="mail_subject">
+                  Subject <span className="text-xs font-normal text-slate-400 font-mono">({`{name}`} will parse name)</span>
+                </label>
+                {subjectSpamWords.length > 0 && (
+                  <span className="text-[10px] text-rose-600 font-bold flex items-center space-x-1 animate-pulse">
+                    <span>⚠️ Spam Word Detected! (स्पैम शब्द मिला)</span>
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
-                className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg py-2.5 px-3.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white"
+                className={`w-full text-sm bg-slate-50 border rounded-lg py-2.5 px-3.5 focus:outline-none focus:ring-1 focus:bg-white transition ${
+                  subjectSpamWords.length > 0
+                    ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
+                    : "border-slate-200 focus:ring-indigo-500"
+                }`}
                 placeholder="Enter email subject line"
                 value={subjectTemplate}
                 onChange={(e) => setSubjectTemplate(e.target.value)}
                 id="mail_subject"
               />
+              {subjectSpamWords.length > 0 && (
+                <div className="text-[10.5px] text-rose-600 font-bold bg-rose-50 border border-rose-150 rounded-lg p-2 mt-1 leading-normal">
+                  ⚠️ Subject contains spam trigger terms: <span className="underline font-extrabold">{subjectSpamWords.join(", ")}</span> (इससे बचें या सिंबल लगायें)
+                </div>
+              )}
             </div>
           </div>
 
@@ -922,66 +958,33 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left: Message Body */}
             <div className="space-y-1">
-              <div className="flex justify-between items-stretch sm:items-center sm:flex-row flex-col gap-1.5">
+              <div className="flex justify-between items-center">
                 <label className="block text-sm font-bold text-slate-700" htmlFor="mail_body">
                   Message Body
                 </label>
-                <div className="flex flex-wrap items-center gap-1.5 bg-indigo-50/50 p-1.5 rounded-lg border border-indigo-100">
-                  <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-tight">Anti-Spam Code:</span>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {name}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
-                  >
-                    +name
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {email}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
-                  >
-                    +email
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {random_id}")}
-                    className="text-[10px] bg-amber-100/80 hover:bg-amber-200/80 border border-amber-250 px-1.5 py-0.5 rounded font-mono text-amber-900 font-bold shadow-2xs transition"
-                    title="Bypasses Gmail duplicate spam filters (Generates custom unique code for every person)."
-                  >
-                    +unique_id
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {date}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
-                  >
-                    +date
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {time}")}
-                    className="text-[10px] bg-white hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono text-slate-800 font-bold shadow-2xs transition"
-                  >
-                    +time
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyTemplate(p => p + " {Hi|Hello|Hey}")}
-                    className="text-[10px] bg-emerald-100/80 hover:bg-emerald-250/80 border border-emerald-250 px-1.5 py-0.5 rounded font-mono text-emerald-900 font-bold shadow-2xs transition"
-                    title="Spintax format: Randomly chooses one option per email."
-                  >
-                    +spintax
-                  </button>
-                </div>
+                {bodySpamWords.length > 0 && (
+                  <span className="text-[10px] text-rose-600 font-bold flex items-center space-x-1 animate-pulse">
+                    <span>⚠️ Spam Content Warning (स्पैम चेतावनी)</span>
+                  </span>
+                )}
               </div>
               <textarea
                 rows={8}
-                className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white leading-relaxed resize-y font-sans"
+                className={`w-full text-sm bg-slate-50 border rounded-lg p-3.5 focus:outline-none focus:ring-1 focus:bg-white leading-relaxed resize-y font-sans transition ${
+                  bodySpamWords.length > 0
+                    ? "border-rose-500 focus:ring-rose-500 text-rose-900 bg-rose-50/40"
+                    : "border-slate-200 focus:ring-indigo-500"
+                }`}
                 placeholder="Write message here..."
                 value={bodyTemplate}
                 onChange={(e) => setBodyTemplate(e.target.value)}
                 id="mail_body"
               />
+              {bodySpamWords.length > 0 && (
+                <div className="text-[10.5px] text-rose-600 font-bold bg-rose-50 border border-rose-150 rounded-lg p-2.5 mt-2 leading-normal">
+                  ⚠️ Message Body contains spam trigger terms: <span className="underline font-extrabold">{bodySpamWords.join(", ")}</span> (स्पैम फ़ोल्डर से बचने के लिए इन्हें बदलें या 'Spam Protector' का उपयोग करें)
+                </div>
+              )}
 
               {/* Real-time Deliverability & Spam Score Widget */}
               {(() => {
@@ -1032,7 +1035,7 @@ export default function App() {
 
                     {/* Bilingual tip */}
                     <p className="text-[10.5px] text-slate-500 leading-tight italic pt-1 border-t border-slate-50 pt-1.5">
-                      <strong>💡 Tips:</strong> {analysis.level === "good" ? "आपका ईमेल बिल्कुल सुरक्षित है! Mails direct client inbox में लैंड करेंगे।" : "प्रत्येक व्यक्ति का ईमेल अलग होने के लिए संदेश के अंत में '+unique_id' बटन दबाएं, ताकि एंटी-स्पैम फ़िल्टर्स बाईपास हो सकें।"}
+                      <strong>💡 Tips:</strong> {analysis.level === "good" ? "आपका ईमेल बिल्कुल सुरक्षित है! Mails direct client inbox में लैंड करेंगे।" : "प्रत्येक व्यक्ति का ईमेल अलग होने के लिए संदेश में '{random_id}' का प्रयोग करें, ताकि एंटी-स्पैम फ़िल्टर्स बाईपास हो सकें।"}
                     </p>
                   </div>
                 );
